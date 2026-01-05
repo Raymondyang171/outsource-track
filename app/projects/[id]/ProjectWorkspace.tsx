@@ -112,6 +112,10 @@ export default function ProjectWorkspace({ project, tasks, role }: Props) {
   const [subtaskDuration, setSubtaskDuration] = useState(2);
   const [subtaskMsg, setSubtaskMsg] = useState("");
   const [flagsByTask, setFlagsByTask] = useState<Record<string, TaskFlag[]>>({});
+  const [flagManager, setFlagManager] = useState<{ open: boolean; taskId: string | null }>({
+    open: false,
+    taskId: null,
+  });
   const [notesByTask, setNotesByTask] = useState<Record<string, string>>({});
   const [flagMenu, setFlagMenu] = useState<{
     taskId: string;
@@ -516,6 +520,14 @@ export default function ProjectWorkspace({ project, tasks, role }: Props) {
     setFlagMenu(null);
   }
 
+  function openFlagManager(taskId: string | null) {
+    setFlagManager({ open: true, taskId });
+  }
+
+  function closeFlagManager() {
+    setFlagManager({ open: false, taskId: null });
+  }
+
   function openFlagMenu(task: Task, event: ReactPointerEvent<HTMLDivElement>) {
     event.preventDefault();
     event.stopPropagation();
@@ -550,6 +562,13 @@ export default function ProjectWorkspace({ project, tasks, role }: Props) {
       [flagMenu.taskId]: [...(prev[flagMenu.taskId] ?? []), nextFlag],
     }));
     setFlagMenu(null);
+  }
+
+  function deleteFlag(taskId: string, flagId: string) {
+    setFlagsByTask((prev) => ({
+      ...prev,
+      [taskId]: (prev[taskId] ?? []).filter((flag) => flag.id !== flagId),
+    }));
   }
 
   function saveProgress() {
@@ -739,6 +758,9 @@ export default function ProjectWorkspace({ project, tasks, role }: Props) {
                 <button className="btn btn-primary" type="button" onClick={() => setCreateOpen((v) => !v)}>
                   新增任務
                 </button>
+                <button className="btn btn-ghost" type="button" onClick={() => openFlagManager(selectedId)}>
+                  旗標管理
+                </button>
                 <span className="badge">可拖曳與縮放</span>
               </div>
             </div>
@@ -867,9 +889,6 @@ export default function ProjectWorkspace({ project, tasks, role }: Props) {
                         onClick={(event) => event.stopPropagation()}
                         onContextMenu={(event) => openFlagMenu(task, event)}
                       >
-                        <div className="timeline-bar-tooltip">
-                          回報說明：{notesByTask[task.id] ?? "尚無回報"}
-                        </div>
                         <span
                           className="timeline-resize left"
                           onPointerDown={(event) => beginDrag(task, "resize-left", event)}
@@ -883,11 +902,6 @@ export default function ProjectWorkspace({ project, tasks, role }: Props) {
                         const offset =
                           Math.max(0, Math.min(task.duration_days, flag.offset_days)) + flag.offset_hours / 24;
                         const left = (task.start_offset_days + offset) * dayWidth;
-                        const flagDate = new Date(startDate);
-                        flagDate.setDate(
-                          flagDate.getDate() + task.start_offset_days + Math.max(0, flag.offset_days)
-                        );
-                        flagDate.setHours(Math.min(23, Math.max(0, flag.offset_hours)), 0, 0, 0);
                         return (
                           <div
                             key={flag.id}
@@ -895,12 +909,6 @@ export default function ProjectWorkspace({ project, tasks, role }: Props) {
                             style={{ left }}
                           >
                             <span className="timeline-flag-pin" />
-                            <div className="timeline-flag-tooltip">
-                              <div>{flag.text}</div>
-                              <div className="page-subtitle">
-                                {formatDate(flagDate)} ・{String(flag.offset_hours).padStart(2, "0")}:00
-                              </div>
-                            </div>
                           </div>
                         );
                       })}
@@ -979,6 +987,57 @@ export default function ProjectWorkspace({ project, tasks, role }: Props) {
                   </button>
                   <button type="button" className="btn btn-ghost" onClick={closeFlagMenu}>
                     取消
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+          {flagManager.open && (
+            <div className="flag-manager-backdrop" onClick={closeFlagManager}>
+              <div className="flag-manager" onClick={(event) => event.stopPropagation()}>
+                <div className="flag-menu-title">旗標管理</div>
+                {!flagManager.taskId && <div className="page-subtitle">請先選擇任務。</div>}
+                {flagManager.taskId && (
+                  <>
+                    <div className="page-subtitle">
+                      任務：{localTasks.find((task) => task.id === flagManager.taskId)?.name ?? "未知"}
+                    </div>
+                    {(flagsByTask[flagManager.taskId] ?? []).length === 0 && (
+                      <div className="page-subtitle">尚無旗標。</div>
+                    )}
+                    {(flagsByTask[flagManager.taskId] ?? []).map((flag) => {
+                      const task = localTasks.find((item) => item.id === flagManager.taskId);
+                      if (!task) return null;
+                      const flagDate = new Date(startDate);
+                      flagDate.setDate(
+                        flagDate.getDate() + task.start_offset_days + Math.max(0, flag.offset_days)
+                      );
+                      flagDate.setHours(Math.min(23, Math.max(0, flag.offset_hours)), 0, 0, 0);
+                      return (
+                        <div className="flag-manager-item" key={`manager-${flag.id}`}>
+                          <div>
+                            <div>{flag.text}</div>
+                            <div className="page-subtitle">
+                              {flag.level === "danger" ? "危險" : "注意"} ・{formatDate(flagDate)} ・
+                              {String(flag.offset_hours).padStart(2, "0")}:00
+                            </div>
+                          </div>
+                          <button
+                            className="btn btn-ghost"
+                            type="button"
+                            onClick={() => deleteFlag(flagManager.taskId, flag.id)}
+                          >
+                            刪除
+                          </button>
+                        </div>
+                      );
+                    })}
+                    <div className="page-subtitle">右鍵點任務條可新增旗標。</div>
+                  </>
+                )}
+                <div className="flag-menu-actions">
+                  <button type="button" className="btn btn-ghost" onClick={closeFlagManager}>
+                    關閉
                   </button>
                 </div>
               </div>
@@ -1167,35 +1226,6 @@ export default function ProjectWorkspace({ project, tasks, role }: Props) {
                   </button>
                   {subtaskMsg && <div className="page-subtitle">{subtaskMsg}</div>}
                 </div>
-              </div>
-
-              <div className="card" style={{ padding: 14 }}>
-                <div className="card-header">
-                  <div className="card-title">旗標</div>
-                  <span className="badge">右鍵新增</span>
-                </div>
-                <div className="page-subtitle">在時間軸的任務條上按右鍵可新增旗標。</div>
-                {(flagsByTask[selectedTask.id] ?? []).length === 0 && (
-                  <div className="page-subtitle">尚無旗標</div>
-                )}
-                {(flagsByTask[selectedTask.id] ?? []).map((flag) => (
-                  (() => {
-                    const flagDate = new Date(startDate);
-                    flagDate.setDate(
-                      flagDate.getDate() + selectedTask.start_offset_days + Math.max(0, flag.offset_days)
-                    );
-                    flagDate.setHours(Math.min(23, Math.max(0, flag.offset_hours)), 0, 0, 0);
-                    return (
-                      <div className="task-card" key={`flag-${flag.id}`}>
-                        <div>{flag.text}</div>
-                        <div className="page-subtitle">
-                          {flag.level === "danger" ? "危險" : "注意"} ・{formatDate(flagDate)} ・
-                          {String(flag.offset_hours).padStart(2, "0")}:00
-                        </div>
-                      </div>
-                    );
-                  })()
-                ))}
               </div>
 
               <div className="card" style={{ padding: 14 }}>

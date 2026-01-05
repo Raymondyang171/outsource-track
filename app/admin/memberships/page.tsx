@@ -75,14 +75,17 @@ export default async function AdminMembershipsPage() {
     ? await admin.from("memberships").select("user_id, unit_id, role, created_at, org_id").eq("org_id", orgId).order("created_at", { ascending: false })
     : await admin.from("memberships").select("user_id, unit_id, role, created_at, org_id").order("created_at", { ascending: false });
 
+  const orgNameById = Object.fromEntries((orgs ?? []).map((org) => [org.id, org.name]));
+  const unitNameById = Object.fromEntries((units ?? []).map((unit) => [unit.id, unit.name]));
+
   return (
     <div className="admin-page">
-      <h1>/admin/memberships</h1>
-      {!orgId && <p>Missing org membership for current user. Showing all orgs.</p>}
+      <h1>成員權限</h1>
+      {!orgId && <p>尚未綁定組織，暫時顯示全部資料。</p>}
       {orgErr && <p className="admin-error">{orgErr.message}</p>}
       {unitErr && <p className="admin-error">{unitErr.message}</p>}
       {error && <p className="admin-error">{error.message}</p>}
-      {!error && (!memberships || memberships.length === 0) && <p>No memberships found.</p>}
+      {!error && (!memberships || memberships.length === 0) && <p>目前沒有成員資料。</p>}
       {!error && (
         <form className="admin-form" action={async (formData) => {
           "use server";
@@ -100,26 +103,26 @@ export default async function AdminMembershipsPage() {
           });
         }}>
           <select name="org_id" defaultValue={orgId ?? ""}>
-            <option value="">Select org</option>
+            <option value="">選擇組織</option>
             {(orgs ?? []).map((org) => (
               <option key={org.id} value={org.id}>
-                {org.name} ({org.id})
+                {org.name}
               </option>
             ))}
           </select>
           <select name="unit_id" defaultValue="">
-            <option value="">Select unit</option>
+            <option value="">選擇單位</option>
             {(units ?? []).map((unit) => (
               <option key={unit.id} value={unit.id}>
-                {unit.name} ({unit.id})
+                {unit.name}
               </option>
             ))}
           </select>
           <select name="user_id" defaultValue="">
-            <option value="">Select user</option>
+            <option value="">選擇使用者</option>
             {userOptions.map((u) => (
               <option key={u.id} value={u.id}>
-                {u.displayName} ({u.email || u.id})
+                {u.displayName}
               </option>
             ))}
           </select>
@@ -128,32 +131,26 @@ export default async function AdminMembershipsPage() {
             <option value="member">member</option>
             <option value="viewer">viewer</option>
           </select>
-          <button type="submit">Create membership</button>
+          <button type="submit">新增成員</button>
         </form>
       )}
       {!error && memberships && memberships.length > 0 && (
         <table className="admin-table">
           <thead>
             <tr>
-              <th>User</th>
-              <th>Org</th>
-              <th>Unit</th>
-              <th>Role</th>
-              <th>Created</th>
+              <th>使用者</th>
+              <th>組織</th>
+              <th>單位</th>
+              <th>角色</th>
+              <th>建立時間</th>
             </tr>
           </thead>
           <tbody>
             {memberships.map((m) => (
               <tr key={`${m.user_id}:${m.unit_id}`}>
-                <td>
-                  {userOptions.find((u) => u.id === m.user_id)?.displayName ?? m.user_id}
-                </td>
-                <td>
-                  <code>{m.org_id}</code>
-                </td>
-                <td>
-                  <code>{m.unit_id}</code>
-                </td>
+                <td>{userOptions.find((u) => u.id === m.user_id)?.displayName ?? "未知使用者"}</td>
+                <td>{orgNameById[m.org_id] ?? "-"}</td>
+                <td>{unitNameById[m.unit_id] ?? "-"}</td>
                 <td>{m.role}</td>
                 <td>{new Date(m.created_at).toLocaleString()}</td>
               </tr>

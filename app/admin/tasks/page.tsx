@@ -162,16 +162,20 @@ export default async function AdminTasksPage() {
         .order("created_at", { ascending: false })
         .limit(200);
 
+  const orgNameById = Object.fromEntries((orgs ?? []).map((org) => [org.id, org.name]));
+  const unitNameById = Object.fromEntries((units ?? []).map((unit) => [unit.id, unit.name]));
+  const taskNameById = Object.fromEntries((tasks ?? []).map((task) => [task.id, task.name]));
+
   return (
     <div className="admin-page">
-      <h1>/admin/tasks</h1>
-      {!orgId && <p>Missing org membership for current user. Showing all orgs.</p>}
+      <h1>任務管理</h1>
+      {!orgId && <p>尚未綁定組織，暫時顯示全部資料。</p>}
       {orgErr && <p className="admin-error">{orgErr.message}</p>}
       {unitErr && <p className="admin-error">{unitErr.message}</p>}
       {projErr && <p className="admin-error">{projErr.message}</p>}
       {error && <p className="admin-error">{error.message}</p>}
       {logErr && <p className="admin-error">task_change_logs: {logErr.message}</p>}
-      {!error && (!tasks || tasks.length === 0) && <p>No tasks found.</p>}
+      {!error && (!tasks || tasks.length === 0) && <p>目前沒有任務。</p>}
       {!error && (
         <form className="admin-form" action={async (formData) => {
           "use server";
@@ -207,56 +211,56 @@ export default async function AdminTasksPage() {
           });
         }}>
           <select name="org_id" defaultValue={orgId ?? ""}>
-            <option value="">Select org</option>
+            <option value="">選擇組織</option>
             {(orgs ?? []).map((org) => (
               <option key={org.id} value={org.id}>
-                {org.name} ({org.id})
+                {org.name}
               </option>
             ))}
           </select>
           <select name="unit_id" defaultValue="">
-            <option value="">Select unit</option>
+            <option value="">選擇單位</option>
             {(units ?? []).map((unit) => (
               <option key={unit.id} value={unit.id}>
-                {unit.name} ({unit.id})
+                {unit.name}
               </option>
             ))}
           </select>
           <select name="project_id" defaultValue="">
-            <option value="">Select project</option>
+            <option value="">選擇專案</option>
             {(projects ?? []).map((p) => (
               <option key={p.id} value={p.id}>
-                {p.name} ({p.id})
+                {p.name}
               </option>
             ))}
           </select>
-          <input name="phase_name" placeholder="Phase name" />
-          <input name="code" placeholder="Code (optional)" />
-          <input name="name" placeholder="Task name" />
-          <input name="seq" placeholder="Seq" />
-          <input name="start_offset_days" placeholder="Start offset" />
-          <input name="duration_days" placeholder="Duration" />
+          <input name="phase_name" placeholder="階段名稱" />
+          <input name="code" placeholder="代碼（選填）" />
+          <input name="name" placeholder="任務名稱" />
+          <input name="seq" placeholder="序號" />
+          <input name="start_offset_days" placeholder="開始偏移日" />
+          <input name="duration_days" placeholder="工期（天）" />
           <select name="owner_unit_id" defaultValue="">
-            <option value="">Owner unit (optional)</option>
+            <option value="">負責單位（選填）</option>
             {(units ?? []).map((unit) => (
               <option key={unit.id} value={unit.id}>
-                {unit.name} ({unit.id})
+                {unit.name}
               </option>
             ))}
           </select>
-          <button type="submit">Create task</button>
+          <button type="submit">新增任務</button>
         </form>
       )}
       {!error && tasks && tasks.length > 0 && (
         <table className="admin-table">
           <thead>
             <tr>
-              <th>Task</th>
-              <th>Seq</th>
-              <th>Org</th>
-              <th>Unit</th>
-              <th>Progress</th>
-              <th>Updated</th>
+              <th>任務</th>
+              <th>序號</th>
+              <th>組織</th>
+              <th>單位</th>
+              <th>進度</th>
+              <th>更新時間</th>
             </tr>
           </thead>
           <tbody>
@@ -264,15 +268,11 @@ export default async function AdminTasksPage() {
               <Fragment key={t.id}>
                 <tr key={t.id}>
                   <td>
-                    {t.phase_name} {t.code ? `[${t.code}] ` : ""}{t.name} (<code>{t.id}</code>)
+                    {t.phase_name} {t.code ? `[${t.code}] ` : ""}{t.name}
                   </td>
                   <td>{t.seq}</td>
-                  <td>
-                    <code>{t.org_id}</code>
-                  </td>
-                  <td>
-                    <code>{t.unit_id}</code>
-                  </td>
+                  <td>{orgNameById[t.org_id] ?? "-"}</td>
+                  <td>{unitNameById[t.unit_id] ?? "-"}</td>
                   <td>{t.progress}%</td>
                   <td>{new Date(t.updated_at).toLocaleString()}</td>
                 </tr>
@@ -280,32 +280,36 @@ export default async function AdminTasksPage() {
                   <td colSpan={6}>
                     <form className="admin-form" action={updateTaskAction}>
                       <input type="hidden" name="task_id" value={t.id} />
-                      <input name="phase_name" defaultValue={t.phase_name} placeholder="Phase" />
-                      <input name="code" defaultValue={t.code ?? ""} placeholder="Code" />
-                      <input name="name" defaultValue={t.name} placeholder="Task name" />
-                      <input name="seq" defaultValue={String(t.seq)} placeholder="Seq" />
-                      <input name="progress" defaultValue={String(t.progress)} placeholder="Progress" />
-                      <input name="start_offset_days" defaultValue={String(t.start_offset_days ?? 0)} placeholder="Start offset" />
-                      <input name="duration_days" defaultValue={String(t.duration_days ?? 1)} placeholder="Duration" />
+                      <input name="phase_name" defaultValue={t.phase_name} placeholder="階段" />
+                      <input name="code" defaultValue={t.code ?? ""} placeholder="代碼" />
+                      <input name="name" defaultValue={t.name} placeholder="任務名稱" />
+                      <input name="seq" defaultValue={String(t.seq)} placeholder="序號" />
+                      <input name="progress" defaultValue={String(t.progress)} placeholder="進度" />
+                      <input
+                        name="start_offset_days"
+                        defaultValue={String(t.start_offset_days ?? 0)}
+                        placeholder="開始偏移日"
+                      />
+                      <input name="duration_days" defaultValue={String(t.duration_days ?? 1)} placeholder="工期" />
                       <select name="unit_id" defaultValue={t.unit_id}>
                         {(units ?? []).map((unit) => (
                           <option key={unit.id} value={unit.id}>
-                            {unit.name} ({unit.id})
+                            {unit.name}
                           </option>
                         ))}
                       </select>
                       <select name="owner_unit_id" defaultValue={t.owner_unit_id ?? ""}>
-                        <option value="">Owner unit</option>
+                        <option value="">負責單位</option>
                         {(units ?? []).map((unit) => (
                           <option key={unit.id} value={unit.id}>
-                            {unit.name} ({unit.id})
+                            {unit.name}
                           </option>
                         ))}
                       </select>
-                      <input name="completed_at" placeholder="Completed at (YYYY-MM-DD HH:mm)" />
-                      <input name="action" placeholder="Action" />
-                      <input name="note" placeholder="Note/action" />
-                      <button type="submit">Update</button>
+                      <input name="completed_at" placeholder="完成時間 (YYYY-MM-DD HH:mm)" />
+                      <input name="action" placeholder="動作" />
+                      <input name="note" placeholder="備註" />
+                      <button type="submit">更新</button>
                     </form>
                   </td>
                 </tr>
@@ -317,34 +321,28 @@ export default async function AdminTasksPage() {
 
       {!logErr && taskLogs && taskLogs.length > 0 && (
         <div className="admin-section">
-          <h2>Task change logs</h2>
+          <h2>任務變更紀錄</h2>
           <table className="admin-table">
             <thead>
               <tr>
-                <th>Task</th>
-                <th>Action</th>
-                <th>By</th>
-                <th>Org</th>
-                <th>Unit</th>
-                <th>Completed</th>
-                <th>Note</th>
-                <th>Time</th>
+                <th>任務</th>
+                <th>動作</th>
+                <th>人員</th>
+                <th>組織</th>
+                <th>單位</th>
+                <th>完成時間</th>
+                <th>備註</th>
+                <th>時間</th>
               </tr>
             </thead>
             <tbody>
               {taskLogs.map((log) => (
                 <tr key={log.id}>
-                  <td>
-                    <code>{log.task_id}</code>
-                  </td>
+                  <td>{taskNameById[log.task_id] ?? "未知任務"}</td>
                   <td>{log.action}</td>
-                  <td>{userOptions.find((u) => u.id === log.user_id)?.displayName ?? log.user_id}</td>
-                  <td>
-                    <code>{log.org_id ?? "-"}</code>
-                  </td>
-                  <td>
-                    <code>{log.unit_id ?? "-"}</code>
-                  </td>
+                  <td>{userOptions.find((u) => u.id === log.user_id)?.displayName ?? "未知使用者"}</td>
+                  <td>{log.org_id ? orgNameById[log.org_id] ?? "-" : "-"}</td>
+                  <td>{log.unit_id ? unitNameById[log.unit_id] ?? "-" : "-"}</td>
                   <td>{log.completed_at ? new Date(log.completed_at).toLocaleString() : "-"}</td>
                   <td>{log.note ?? "-"}</td>
                   <td>{new Date(log.created_at).toLocaleString()}</td>

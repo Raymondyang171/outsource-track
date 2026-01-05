@@ -62,14 +62,17 @@ export default async function AdminProjectsPage() {
         .select("id, name, org_id, unit_id, start_date, status, created_at")
         .order("created_at", { ascending: false });
 
+  const orgNameById = Object.fromEntries((orgs ?? []).map((org) => [org.id, org.name]));
+  const unitNameById = Object.fromEntries((units ?? []).map((unit) => [unit.id, unit.name]));
+
   return (
     <div className="admin-page">
-      <h1>/admin/projects</h1>
-      {!orgId && <p>Missing org membership for current user. Showing all orgs.</p>}
+      <h1>專案管理</h1>
+      {!orgId && <p>尚未綁定組織，暫時顯示全部資料。</p>}
       {orgErr && <p className="admin-error">{orgErr.message}</p>}
       {unitErr && <p className="admin-error">{unitErr.message}</p>}
       {error && <p className="admin-error">{error.message}</p>}
-      {!error && (!projects || projects.length === 0) && <p>No projects found.</p>}
+      {!error && (!projects || projects.length === 0) && <p>目前沒有專案。</p>}
 
       {!error && (
         <form
@@ -93,25 +96,25 @@ export default async function AdminProjectsPage() {
           }}
         >
           <select name="org_id" defaultValue={orgId ?? ""}>
-            <option value="">Select org</option>
+            <option value="">選擇組織</option>
             {(orgs ?? []).map((org) => (
               <option key={org.id} value={org.id}>
-                {org.name} ({org.id})
+                {org.name}
               </option>
             ))}
           </select>
           <select name="unit_id" defaultValue="">
-            <option value="">Select unit</option>
+            <option value="">選擇單位</option>
             {(units ?? []).map((unit) => (
               <option key={unit.id} value={unit.id}>
-                {unit.name} ({unit.id})
+                {unit.name}
               </option>
             ))}
           </select>
-          <input name="name" placeholder="Project name" />
-          <input name="start_date" placeholder="Start date (YYYY-MM-DD)" />
-          <input name="status" placeholder="Status (optional)" />
-          <button type="submit">Create project</button>
+          <input name="name" placeholder="專案名稱" />
+          <input name="start_date" placeholder="開始日期 (YYYY-MM-DD)" />
+          <input name="status" placeholder="狀態（選填）" />
+          <button type="submit">新增專案</button>
         </form>
       )}
 
@@ -119,26 +122,20 @@ export default async function AdminProjectsPage() {
         <table className="admin-table">
           <thead>
             <tr>
-              <th>Project</th>
-              <th>Org</th>
-              <th>Unit</th>
-              <th>Start</th>
-              <th>Status</th>
-              <th>Created</th>
+              <th>專案</th>
+              <th>組織</th>
+              <th>單位</th>
+              <th>開始日</th>
+              <th>狀態</th>
+              <th>建立時間</th>
             </tr>
           </thead>
           <tbody>
             {projects.map((p) => (
               <tr key={p.id}>
-                <td>
-                  {p.name} (<code>{p.id}</code>)
-                </td>
-                <td>
-                  <code>{p.org_id}</code>
-                </td>
-                <td>
-                  <code>{p.unit_id}</code>
-                </td>
+                <td>{p.name}</td>
+                <td>{orgNameById[p.org_id] ?? "-"}</td>
+                <td>{unitNameById[p.unit_id] ?? "-"}</td>
                 <td>{p.start_date}</td>
                 <td>{p.status}</td>
                 <td>{new Date(p.created_at).toLocaleString()}</td>

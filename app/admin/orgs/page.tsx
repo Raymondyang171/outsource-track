@@ -49,10 +49,10 @@ export default async function AdminOrgsPage() {
 
   return (
     <div className="admin-page">
-      <h1>/admin/orgs</h1>
-      {!orgId && <p>Missing org membership for current user. Showing all orgs.</p>}
+      <h1>組織設定</h1>
+      {!orgId && <p>尚未綁定組織，暫時顯示全部資料。</p>}
       {error && <p className="admin-error">{error.message}</p>}
-      {!error && (!orgs || orgs.length === 0) && <p>No orgs found.</p>}
+      {!error && (!orgs || orgs.length === 0) && <p>目前沒有組織。</p>}
       {!error && (
         <form className="admin-form" action={async (formData) => {
           "use server";
@@ -61,24 +61,22 @@ export default async function AdminOrgsPage() {
           const adminClient = createAdminSupabase();
           await adminClient.from("orgs").insert({ name });
         }}>
-          <input name="name" placeholder="New org name" />
-          <button type="submit">Create org</button>
+          <input name="name" placeholder="組織名稱" />
+          <button type="submit">新增組織</button>
         </form>
       )}
       {!error && orgs && orgs.length > 0 && (
         <table className="admin-table">
           <thead>
             <tr>
-              <th>Org</th>
-              <th>Created</th>
+              <th>組織</th>
+              <th>建立時間</th>
             </tr>
           </thead>
           <tbody>
             {orgs.map((org) => (
               <tr key={org.id}>
-                <td>
-                  {org.name} (<code>{org.id}</code>)
-                </td>
+                <td>{org.name}</td>
                 <td>{new Date(org.created_at).toLocaleString()}</td>
               </tr>
             ))}

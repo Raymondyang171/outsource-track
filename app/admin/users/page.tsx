@@ -135,6 +135,12 @@ export default async function AdminUsersPage({ searchParams }: PageProps) {
             .in("user_id", userIds);
 
           const displayById = new Map((profileList ?? []).map((p) => [p.user_id, p.display_name]));
+          userNameById = Object.fromEntries(
+            users.map((u) => [
+              u.id,
+              (displayById.get(u.id) ?? "").trim() || emailToDisplayName(u.email),
+            ])
+          );
           const missing = users
             .filter((u) => {
               const d = displayById.get(u.id);
@@ -229,7 +235,18 @@ export default async function AdminUsersPage({ searchParams }: PageProps) {
     }
   }
 
-  userNameById = Object.fromEntries(userOptions.map((u) => [u.id, u.displayName]));
+  if (Object.keys(userNameById).length === 0 && memberships.length > 0) {
+    const userIds = Array.from(new Set(memberships.map((m) => m.user_id)));
+    const { data: profileList } = await listClient
+      .from("profiles")
+      .select("user_id, display_name")
+      .in("user_id", userIds);
+
+    const displayById = new Map((profileList ?? []).map((p) => [p.user_id, p.display_name]));
+    userNameById = Object.fromEntries(
+      userIds.map((id) => [id, (displayById.get(id) ?? "").trim() || "未知使用者"])
+    );
+  }
 
   return (
     <div className="admin-page">

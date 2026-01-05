@@ -1,0 +1,83 @@
+你是資深 Full-stack Tech Lead（Next.js + Supabase）。請在現有 repo 內「大規模建立骨架」，把 Web 端做成 Asana 風格的：Dashboard / Board（看板）/ Timeline（時間軸）/ Workflow（右側 Task Detail Panel）。
+
+# 0) 先讀規格（必做）
+- 先在 repo 內搜尋並閱讀下列檔案（檔名可能在 docs/ 內）：
+  - issue_spec_V0.1（產品定位/權限/UX 要點：點擊 Task -> 右側滑出 Detail Panel，不要往下展開）
+  - db_schema（Supabase tables：orgs/units/memberships/profiles/templates/template_phases/template_tasks/projects/project_tasks/progress_logs/drive_items）
+  - 基礎開發架構（Next.js + shadcn/ui + Tailwind + Supabase）
+  - 基礎表格（React 原型：甘特/點擊編輯/面板結構）
+- 讀完後輸出「你理解的 10 條不容違背的 UI/資料/權限約束」，寫入 /docs/contracts/ui-contract.md 與 /docs/contracts/data-contract.md
+
+# 1) 技術與約束（必遵守）
+- Web：Next.js App Router + TypeScript + Tailwind + shadcn/ui
+- 資料：Supabase（Postgres），使用 supabase-js（server/client 分層清楚）
+- 互動：主畫面永遠在；Task 詳情永遠用右側 Detail Panel（Sheet/Drawer/SlideOver），禁止 inline 展開破壞體感
+- 權限：先做「不漏資料」版本（最小可用），之後再補齊 RLS；但程式端要先把 org_id / unit_id 作用域卡死
+- 風格：企業控台（清楚、克制、可維護），避免過度炫技
+- 交付：必須能跑起來（dev server 不報錯）、主要頁面能點得到、有假資料 fallback（沒連 DB 也能看 UI）
+
+# 2) 你要產出的骨架（交付清單）
+A. 路由與頁面（App Router）
+- /login（Supabase Auth；若 repo 目前無 Auth，先做「假登入開關 + 後續接 Auth 的 TODO」）
+- / (Dashboard landing：總覽)
+- /projects（專案列表：可建立專案、可選專案）
+- /projects/[projectId]
+  - 頂部 Tabs：Dashboard / Board / Timeline / Files / Settings
+  - 任一 view 點 Task 卡片 => 右側 Task Detail Panel（共用元件）
+
+B. 核心元件（可重用）
+- <AppShell />：左側導覽（Dashboard/Projects/Templates/Admin），上方 Topbar（Org/Unit 切換、使用者）
+- <ProjectHeader />：專案名稱、狀態、起始日、整體進度
+- <TaskCard />：顯示 name、owner、progress、標籤（phase）
+- <TaskDetailPanel />（最重要）
+  - 基本資訊：名稱、phase、owner、duration、start_offset_days
+  - 進度：progress slider（0-100）+ 新增 progress_log（note）
+  - 附件/文件：drive_items 列表 + 「新增連結（先用手動貼 URL）」表單
+  - 活動紀錄：progress_logs 時間序
+- <BoardView />：以 phase_name 分欄（Column），卡片可點
+- <TimelineView />：甘特（以 project.start_date + task.start_offset_days + duration_days 算條）
+- <DashboardView />（專案內與全域兩種）
+  - KPI：總任務數、完成率、逾期數（先用簡化：start_offset+duration 推估到期日）
+  - By Phase：每個 phase 的平均進度（或 max/avg，先選 avg）
+  - Recent Updates：最近 progress_logs
+- <FilesView />：以 task 為 group 列出 drive_items（可點開 web_view_link）
+
+C. Data Access 層（分層要清楚）
+- /lib/supabase/server.ts（createServerClient）
+- /lib/supabase/client.ts（createBrowserClient）
+- /lib/repos/*.ts（資料存取：projectsRepo, tasksRepo, logsRepo, filesRepo）
+- /lib/types.ts（從 db_schema 建 type；至少先手寫型別，後續再接 codegen）
+
+D. 最小可用的 CRUD（先做到「可跑、可用、可驗收」）
+- Projects：
+  - list projects by org
+  - create project（可選 template_id；若選了就把 template_phases/template_tasks 展開成 project_tasks）
+- Tasks：
+  - list tasks by project
+  - update task progress（同步寫 progress_logs）
+- Files（drive_items）：
+  - list by task
+  - create drive_item（先手動輸入 name + web_view_link + drive_file_id 可空/placeholder）
+
+E. Seed/Mock（避免空畫面）
+- 若資料庫無資料：提供 mockTemplates/mockProjects/mockTasks（僅 dev），UI 仍可操作（點卡片開 panel）
+- 提供 /scripts/seed.ts（可選）或 /supabase/seed.sql（可選），讓我能快速塞入 org/unit/template
+
+# 3) 工作流程（Codex 的執行方式）
+- 先輸出「檔案樹規劃」與「每個檔案的責任」清單
+- 再開始產生檔案與程式碼
+- 每個階段完成後，更新 /docs/status/phase-2b.md（勾選清單：已完成/待辦/風險）
+
+# 4) 驗收標準（Definition of Done）
+- `npm run dev` 可啟動、首頁與 /projects 可進入
+- 專案頁可切 Dashboard/Board/Timeline
+- 點任務卡片必定開右側 Task Detail Panel（不可 inline 展開）
+- 在 Panel 更新 progress + note 後，UI 立即反映，且活動紀錄可看到新增 log
+- Files 頁能看到該專案所有 drive_items，且連結可點
+
+# 5) 明確非目標（先別做）
+- 不做完整 Mobile App（Phase 2B 先專注 Web 骨架）
+- 不做完整 Google Drive OAuth 上傳（先手動貼 URL 過渡）
+- 不做複雜工作流引擎（先用 phase_name 分欄 + progress log）
+
+開始執行。

@@ -1,0 +1,399 @@
+## 一、產品定位與整體架構概念
+
+1. **產品定位**
+
+   * 這是一套「外包專案 + 文件/照片回報」協作系統。
+   * **Web 端**＝控台 & 配置中心：
+
+     * 使用者管理、權限管理
+     * 專案與模板管理
+     * Google Drive 文件連結管理
+     * 全局 Dashboard / 面板檢視
+   * **手機 / 平板 App**＝現場執行端：
+
+     * 依個人權限只看到「自己單位」可操作的任務
+     * 拍照上傳（存到 GDrive，系統記錄 URL）
+     * 填寫進度 / 備註
+
+2. **與附件 React 範本的關係（FLOW_TEMPLATES）**
+
+   * 附件程式中的 `FLOW_TEMPLATES`：
+
+     * 已定義：`標準工程外包模板 / 快速維修模板`
+     * 每個模板底下有 `phases`（階段，例如：立項、設計）
+     * 每個 phase 有 `tasks`（任務，例如：需求評估、圖紙製作）
+     * init 時會產生：
+
+       * `progress: 0`
+       * `documents: [] // { type, url, name, updatedAt }`
+   * **未來系統**：
+
+     * 把這整組結構正式變成「模板定義 + 專案實例」的資料模型
+     * 主面板畫面 = 「專案工作板（按 phase / task 排列）」
+
+---
+
+## 二、使用者角色與權限模型（V1 定義）
+
+1. **基本資料結構**
+
+   * `User`（使用者）
+
+     * 姓名（name）
+     * 帳號（account / email）
+     * 密碼（hashed_password）
+     * 所屬單位（department / unit）
+     * 角色（role：Admin / PM / Member / Viewer）
+   * `Department`（單位）
+
+     * 代碼、名稱
+     * 與 User 多對一關係
+
+2. **角色權限（先做簡化版 Rule）**
+
+   * **Admin（系統管理者）**
+
+     * 管理使用者 / 權限
+     * 建立/編輯「模板」
+     * 建立/關閉專案
+     * 可瀏覽所有檔案與進度
+   * **PM（專案管理者）**
+
+     * 指定專案成員 & 單位
+     * 在 Web 端調整專案的 phase / task 設定（非模板層級）
+     * 可檢視所有單位的進度與附件狀態（是否有檔案 / 檔案數量），但實際檔案內容依部門規則顯示
+   * **Member（專案成員）**
+
+     * 限定在「自己有參與的專案 + 自己單位的任務」上傳附件 / 編輯進度
+     * 只能打開自己單位上傳的附件；其他單位只看到「有幾個檔案 / 完成狀態」
+   * **Viewer（檢視者）**
+
+     * 只可看「完整面板資訊、任務狀態彙總」，但不顯示實際檔案列表與連結
+
+3. **權限規則對需求 2.1 的對應**
+
+   * 「只有自己單位的人，可以看到自己上傳的檔案，並回報進度」
+
+     * `Attachment.visible_to_department = 上傳者單位`（V1 先採用「部門級」可視性）
+     * Task 進度：
+
+       * 任務的「總進度」由系統根據各單位回報彙總（例如：取最大值、或 PM 手動調整）
+       * Member 只能操作自己單位對應的子進度欄位
+   * 「所有的人都能看到完整的面板資訊」
+
+     * Dashboard / Project Board 上顯示：
+
+       * 每個任務：名稱、預計天數、負責單位、開始/結束日期、整體進度%
+       * 附件總數（如：`設計部: 3 / 工務: 1`），但只有對應單位人員可以展開清單 & 點擊 URL
+
+---
+
+## 三、核心功能模組（Web 端）
+
+### A. 使用者與權限管理
+
+1. 功能內容
+
+   * 使用者清單：搜尋 / 篩選（依單位、角色）
+   * 建立 / 編輯 / 停用帳號
+   * 設定角色、單位、預設語系（中 / 越）
+   * 簡單登入審計（最後登入時間、啟用/停用）
+
+2. 驗收重點
+
+   * Admin 可在 Web 端完全管理帳號
+   * 權限錯誤時，前端 UI 會適度「灰掉 / 禁用」，後端同時做 API 權限驗證
+
+---
+
+### B. 模板管理（以附件 FLOW_TEMPLATES 為基礎）
+
+1. 功能內容
+
+   * 模板基本資料：
+
+     * 名稱、描述、預設顏色（phase color）、適用場景（工程 / 維修 / 其他）
+   * 模板結構編輯：
+
+     * Phase 管理：新增 / 刪除 / 排序調整
+     * Task 管理：
+
+       * 任務名稱
+       * 預計工期 (duration)
+       * 預設負責單位 (owner / department)
+       * 預設地點 (location)
+       * 預設需備材料 / 文件說明 (materials)
+   * 從模板建立專案：
+
+     * 選擇模板 → 輸入專案名稱、客戶、期間 → 產生專案實例
+
+2. 驗收重點
+
+   * 新建立的專案，其 phase / task 結構要與模板一致
+   * 可在 Template 不影響既有專案的前提下「版本更新」
+
+---
+
+### C. 專案選擇與主面板（Project Board / Dashboard）
+
+1. 專案選擇
+
+   * 頁面上方：
+
+     * 專案下拉清單 + 搜尋
+     * 篩選條件：進行中 / 已完工 / 暫停；客戶；負責 PM
+   * 選擇專案後：主面板顯示該專案的 flow（即附件的 phase / task 畫面）
+
+2. 主面板呈現（參考附件畫面）
+
+   * 橫向：Phase（立項 / 設計 / 施工...）
+   * 縱向：Task（1.1 / 1.2 / 2.1 ...）
+   * 每個 Task 卡片上顯示：
+
+     * 任務名稱
+     * 負責單位
+     * 預計工期 / 日數
+     * 整體進度條
+     * 附件狀態圖示（已上傳 / 未上傳 / 有警示）
+
+3. 點擊互動（呼應需求 2.2）
+
+   * **規則：點擊後開「側邊面板 / Modal 視窗」，不向下展開。**
+   * Modal / 側邊欄內容：
+
+     * 任務基本資料
+     * 各單位的進度回報列表
+     * 各單位的附件清單（僅顯示有權限的 Einzel-user）
+     * 按鈕：
+
+       * 「編輯任務設定」（僅 PM 以上）
+       * 「開啟 Google Drive 文件」（連結新視窗）
+   * 好處：
+
+     * 不會破壞主面板節奏，不會「一展開就拉到地心」
+     * 一致對應 Web / App 的互動習慣
+
+---
+
+### D. Google Drive 檔案 / 資料夾管理
+
+1. 概念
+
+   * 真正檔案放在 Google Drive（以專案 / phase / task 或日期為目錄）
+   * 系統只紀錄：
+
+     * `file_name`
+     * `file_type`（photo / pdf / docx ...）
+     * `gdrive_url`
+     * `uploaded_by_user`, `uploaded_by_department`
+     * `uploaded_at`
+
+2. Web 端功能
+
+   * 在 Task 的 Modal 裡：
+
+     * 看到自己單位的檔案列表（可點選打開新分頁）
+   * Admin / PM 可設定：
+
+     * 該專案的 Google Drive 根目錄 URL
+     * 自動命名規則（V2 可以再談）
+
+---
+
+## 四、手機 / 平板 App 功能（V1）
+
+1. App 使用者
+
+   * 主體是現場人員、工務、設計、監造等單位的 Member 角色
+
+2. 主要畫面流程
+
+   * 登入 → 專案列表（自己有權限的） → 選專案 → 該專案中「自己單位負責的 Task 列表」
+   * 點 Task → 進入「回報畫面」：
+
+     * 顯示 Task 基本資訊（名稱、簡述、預計完成日）
+     * 進度回報（% 或階段下拉，如：未開工 / 施工中 / 已完工）
+     * 拍照上傳 / 選取相簿 → 呼叫後端 API，後端把檔案丟到 GDrive → 回寫 URL
+     * 填寫備註
+
+3. 權限與資料顯示
+
+   * 僅顯示：
+
+     * 自己有參與的專案
+     * 其中「自己單位」的任務
+   * 不顯示其他單位已上傳的檔案詳細列表（只在 Web 的彙總面板給 PM 看統計）
+
+---
+
+## 五、資料模型 V1 草案（簡化版）
+
+1. 核心 Entity
+
+   * `User(id, name, account, hashed_password, department_id, role, ... )`
+   * `Department(id, name)`
+   * `Project(id, name, client, status, start_date, end_date, template_id, manager_id, gdrive_root_url)`
+   * `Template(id, name, description, ...)`
+   * `TemplatePhase(id, template_id, seq, name, color)`
+   * `TemplateTask(id, template_phase_id, seq, name, default_duration, default_department_id, location, materials)`
+   * `ProjectPhase(id, project_id, seq, name, color)`
+   * `ProjectTask(id, project_phase_id, seq, name, planned_duration, owner_department_id, location, materials, overall_progress)`
+   * `TaskProgress(id, project_task_id, department_id, user_id, progress, note, created_at)`
+   * `TaskDocument(id, project_task_id, department_id, user_id, file_name, file_type, gdrive_url, created_at)`
+
+2. 權限判斷關鍵
+
+   * `User.department_id`
+   * `TaskProgress.department_id` / `TaskDocument.department_id`
+   * 整合在 API 層：
+
+     * 查 Task 的 Progress / Document 時，where 條件加上 `department_id = current_user.department_id`（除非是 Admin / PM）
+
+---
+
+## 六、互動規格與 UX 要點（重要）
+
+1. 主面板（Web）
+
+   * 不使用「往下展開」方式顯示詳細資料，以避免使用者迷失在長列表中。
+   * 點擊 Task 卡片 → 右側滑出的 Detail Panel（或 Popup Modal）：
+
+     * 內含所有編輯 / 檢視功能
+     * 若要回報 / 加檔，只在 Panel 內操作
+   * 整體上保持「主面板永遠在、任務細節在側邊」的心智模型。
+
+2. App 端
+
+   * 操作單純：
+
+     * 列表 → 點選 → 回報（進度 + 拍照 + 備註）
+   * 優先考慮：
+
+     * 線上狀況不佳（V2 可以再加離線排隊上傳）
+     * 單手操作
+   * 建議 UI 元件：
+
+     * 大按鈕（新增照片 / 提交回報）
+     * 清楚顯示「已回報幾次 / 上傳幾張」
+
+---
+
+## 七、執行階段規劃（Milestone）
+
+### Phase 0：需求確認與範本固化
+
+* 產出物：
+
+  * 最終版 FLOW_TEMPLATES（標準工程 / 快速維修 至少兩個）
+  * 角色 / 權限矩陣表（Role × 功能列表）
+* 驗收：
+
+  * 附件中的 React 範本邏輯，完全對應到文件規格書
+
+### Phase 1：後端與資料庫基礎建置
+
+* 任務：
+
+  * 資料表 schema（依上面 V1 草案）
+  * 使用者 / 權限 API（註冊、登入、角色檢查）
+  * 專案 / 模板 / Phase / Task 的 CRUD API
+* 驗收：
+
+  * 使用 Postman / Swagger 可確認所有核心 API 可用
+  * 權限控制至少不會漏出他人檔案
+
+### Phase 2：Web 端主控台 & Project Board
+
+* 任務：
+
+  * 專案選擇頁 + 主面板（以現有 React Component 為基礎改造）
+  * Task 點擊 → Modal / 側邊 Panel 詳細視圖
+  * 在 Panel 中顯示進度彙總與附件清單（依權限）
+* 驗收：
+
+  * Admin / PM 可以透過 Web 看到完整的專案版面
+  * Member 登入後，只能看到自己部門可編輯/回報的內容
+
+### Phase 3：Google Drive 整合
+
+* 任務：
+
+  * 後端串接 GDrive API（或先用「手動貼 URL」當過渡期）
+  * 設計「專案 > Task > 檔案」的 URL 命名 / 目錄規則（V1 可先不自動建立資料夾）
+* 驗收：
+
+  * App/Web 上傳檔案 → 後端 → GDrive → 回寫 URL → Web 可點擊開啟
+
+### Phase 4：手機 / 平板 App MVP
+
+* 任務：
+
+  * 登入 / 專案列表 / Task 列表 / 回報畫面
+  * 拍照上傳 + 進度填寫
+* 驗收：
+
+  * 實際在現場用手機走完一個典型流程（例如：拍照上傳、回報施工進度）
+  * Web 端可立刻看到 Task 狀態改變與檔案狀況
+
+---
+
+## 八、可能遺漏 & 建議擴充項目（暫列 V2 之後）
+
+1. **通知機制**
+
+   * LINE / Email 通知：某任務完成、延遲、被退回。
+   * 優點：反應更即時。
+   * 缺點：開發與維運多一條線，需要額外整合。
+
+2. **審批流程 / 簽核流**
+
+   * 某些 Task 需要「PM 或業主核准」才算完成。
+   * 優點：更貼近實務流程。
+   * 缺點：流程建模變複雜，會延長 V1 專案時程。
+
+3. **多語系（中 / 越 / 英）**
+
+   * 對你未來越南市場很重要，但 V1 可先用繁中 + 局部越文。
+
+4. **離線模式（App）**
+
+   * 現場沒網路時，先暫存裝置，連線後批次上傳。
+   * 優點：實務價值高。
+   * 缺點：資料一致性 & 衝突解決要設計良好。
+
+---
+
+## 九、總結與建議（含優缺點與「目前最優解」）
+
+1. **目前 V1 規劃的優點**
+
+   * 架構清楚：
+
+     * Web 做「管理 + 視覺化控台」
+     * App 做「執行 + 回報」
+   * 直接沿用附件中的 `FLOW_TEMPLATES` 思維，避免重造輪子。
+   * 權限模型簡化為「角色 + 部門」，夠用又不過度複雜。
+   * 文件實際存 GDrive，只在系統中管理 metadata，技術風險較低。
+
+2. **目前規劃的缺點 / 風險點**
+
+   * 未納入審批流，對某些客戶可能流程感不足。
+   * App v1 僅做線上回報，若工地網路不佳，使用體驗會受影響。
+   * 權限細緻度目前只做到「部門層級」，若未來要做到「單任務 / 單檔案粒度」需再設計。
+
+3. **以現況來看我建議的「最優解」路線**
+
+   * **階段性目標**：
+
+     * 先完成 Phase 0～3（Web + 後端 + GDrive 整合），把「專案板 + 文件管理」打通。
+     * 再上 Phase 4 的 App（先線上版，離線後補）。
+   * **原因**：
+
+     * 你未來會把這一套變成「產品」，優先要有一個穩定可 demo 的 Web 版與後端架構。
+     * App 的 UX 可以在真實專案試用後迭代，避免一開始就過度設計。
+   * **幽默一點說**：先把「指揮中心」蓋好、雷達打開，再買最新戰術頭盔給現場人員，這樣子每一塊投資都比較不會浪費。
+
+如果你願意，下一步可以：
+
+* 指定一種技術棧（例如：Next.js + Supabase / NestJS + Postgres），
+* 我可以直接幫你把上述規格拆成「實作任務列表（Backlog）」＋「資料表 SQL / ERD 初稿」，讓你可以直接進入 vibe coding 模式實作。

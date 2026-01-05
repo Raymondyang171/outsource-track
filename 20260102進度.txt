@@ -1,0 +1,139 @@
+* ## 1) 依「附件兩份起始文件」檢查：目前夠用，但**還需要補 3 塊關鍵治理**（不補會讓 Codex/LLM 很容易斷線）
+
+  * ### 1.1 你這兩份文件目前已經清楚的地方（✅可直接當起始點）
+
+    * **技術路線已定**：Web 用 Next.js + shadcn/ui + Tailwind；Mobile 用 Expo；後端用 Supabase（Postgres/Auth/RLS/Storage） 
+    * **你要的互動形式已具體化**：模板切換、甘特/表格視覺、點擊跳出編輯（Sheet/Panel）、進度回報、文件聯結的 UI 範例已經很具象 
+  * ### 1.2 建議你補充的內容（⬜建議補，這是「LLM 不斷線」的核心）
+
+    * **(A) 權限矩陣 Permission Matrix（必補）**
+
+      * 你現在有「同 org 可讀、同 unit 才能寫」的治理方向（Phase 2A），但起始文件裡沒有把它變成**人話+表格規則**（誰可看哪些資料、誰可改哪些欄位、誰可上傳/看文件連結）
+      * 建議補到 `CONTEXT.md` 或 `docs/security/permission-matrix.md`
+    * **(B) 資料模型對照 Data Contract（必補）**
+
+      * 你的 UI 範例（phase/task/duration/owner/location/materials/progress/docs）需要對應到 Supabase 的 table/column，否則後面會一直「UI 看起來對、DB 寫不進去」
+      * 建議新增：`docs/db/data-contract.md`（UI 欄位 → DB 欄位 → 哪個 API/Server Action 負責）
+    * **(C) 驗收定義 Definition of Done（強烈建議）**
+
+      * 你已經有 Phase 2A acceptance 概念，但要把它變成**每個 Phase 都可打勾的清單**（含正測/負測/截圖/SQL輸出存檔位置）
+      * 建議新增：`docs/acceptance/phase-2a.md`、`phase-2b.md`…（你會一路爽到上線）
+
+---
+
+* ## 2) 專案「最新狀況」總整理（依你對話紀錄 + Repo 現況）
+
+  * ### 2.1 Repo 已經具備的治理與骨架（✅已完成）
+
+    * GitHub Repo 已存在且包含：
+
+      * `CONTEXT.md`（你已完成）
+      * `db_schema.txt`、`supabase-schema-bynmfoilackhtavlmyre.png`（你已在 repo 內） ([GitHub][1])
+      * `scripts/rls-smoke-test.mjs`（已在 repo 內） ([GitHub][1])
+      * Next.js Web 骨架（`app/`, `components/`, `lib/`, `utils/` 等） ([GitHub][1])
+      * README 已標示 Tech Stack：Next.js（App Router）+ Supabase（Auth/DB/Storage） ([GitHub][1])
+    * 你已完成：
+
+      * `.tmp/`、`supabase/` 排除（你說已完成）
+      * `docs/db` 已同步到 GitHub（你說已完成）
+  * ### 2.2 Phase 2A 文件落地狀況（🟡文件完成；DB 是否「全數負測通過」我無法替你保證）
+
+    * 你已把 `docs/db/phase-2a-migration.sql` + `phase-2a-acceptance.md` commit/push（你說已完成）
+    * 但 **Phase 2A 的終極驗收**要以「負測是否確實被擋」為準（同 org 不同 unit 的 INSERT/UPDATE/DELETE 必須失敗），這需要你在 Supabase/本地用 anon key 跑一次 smoke test 才算真的結案（下面流程會寫）
+
+---
+
+* ## 3) 外包報工 + App：全流程 Roadmap（含你目前已完成標註）
+* ### Phase 0 — Repo 治理底盤（✅已完成）
+
+  * ✅ 建 Repo / push
+  * ✅ `.gitignore` 排除雜訊（.tmp、supabase 等）
+  * ✅ `CONTEXT.md`（讓 LLM/Codex 每次都能讀到同一份「專案憲法」）
+  * ✅ Issue Templates / Spec（repo 內可見） ([GitHub][1])
+* ### Phase 1 — Web MVP（🟡骨架已在；功能驗收待你打勾）
+
+  * ✅ Next.js App Router 骨架、Supabase client/server 工具碼已存在（repo 結構可見） ([GitHub][1])
+  * ⬜ 驗收（建議你用「可打勾」方式做）
+
+    * ⬜ Supabase Auth：登入/登出/Session refresh 正常
+    * ⬜ Projects 清單可讀、Project 詳情可讀
+    * ⬜ TaskEditorSheet：點擊任務→右側/彈窗編輯（符合你“不往下拉破壞體感”的要求）
+* ### Phase 2A — Schema + RLS（🟡文件已落地；建議補齊 smoke test 的可重跑證據）
+
+  * ✅ Migration SQL（補齊 `projects.unit_id`、`project_tasks.org_id/unit_id`、index/FK）
+  * ✅ Acceptance 文檔（你已寫入 docs/db）
+  * ⬜ 真正結案要件（建議你補一份「輸出證據」到 repo）
+
+    * ⬜ `scripts/rls-smoke-test.mjs` 跑過：**正測通、負測擋住**
+    * ⬜ 把終端機輸出貼到 `docs/db/phase-2a-acceptance.md`（或另存 `docs/db/phase-2a-acceptance.log`）
+* ### Phase 2B — App 寫入改造（⬜下一個最該做的）
+
+  * ⬜ 所有 INSERT/UPDATE 都要帶 `org_id/unit_id`（或由 server action 代寫），避免 RLS 被擋
+  * ⬜ 讀寫分離落地：
+
+    * Web 端一般使用者：anon key + RLS
+    * 管理台：server action（service role）做管理操作（典型企業「後台超管」）
+* ### Phase 3 — Mobile/Tablet（Expo）現場回報（⬜）
+
+  * ⬜ 拍照 → 選 project/task → 填寫進度/備註 → 上傳（Storage）→ 寫 progress_logs
+  * ⬜ 離線佇列（現場網路爛的時候你就知道誰是 MVP）
+* ### Phase 4 — 部署與營運（⬜）
+
+  * ⬜ Web：Vercel（或 Cloud Run）
+  * ⬜ Mobile：Expo EAS
+  * ⬜ 監控與稽核：錯誤追蹤、操作日誌、RLS 例外事件
+
+---
+
+* ## 4) 轉到 VS Code + Codex 模式：你應該怎麼「正確接棒」才不會再斷線
+
+  * ### 4.1 你要用哪個（兩條線，選一條就好）
+
+    * **Codex IDE extension（推薦）**：在 VS Code/Cursor/Windsurf 直接讀檔、改檔、跑命令、做任務委派 ([OpenAI 開發者][2])
+    * **ChatGPT Work with Apps（偏搭配 macOS App）**：讓 ChatGPT 可讀取 VS Code 開啟檔案（但定位不同） ([OpenAI Help Center][3])
+  * ### 4.2 Codex IDE extension 的落地做法（建議 SOP）
+
+    * ✅ 安裝 extension、登入（用 ChatGPT 帳號即可） ([OpenAI 開發者][2])
+    * ✅ 在專案根目錄維持 3 份「永遠要先讀」的文件（你已做其中一份）
+
+      * `CONTEXT.md`（你已完成）
+      * `docs/db/phase-2a-migration.sql`（你已完成）
+      * `docs/db/phase-2a-acceptance.md`（你已完成）
+    * ⬜ 建議新增 `AGENTS.md`（或依 Codex 文件建議的 agent 指引檔）
+
+      * 目的：每次 Codex 接手都先讀規範、避免「寫到一半突然改憲法」 ([OpenAI 開發者][2])
+      * 最小內容（你可直接貼到檔案）：
+
+        * 專案目標一句話
+        * RLS 規則一句話（同 org 可讀、同 unit 可寫）
+        * DB schema 更新規則：**改 schema 前先比對並同步更新 `db_schema.txt` + PNG**（你之前已定治理）
+        * 任何 migration 必須寫入 `docs/db/` + 附 acceptance 證據
+
+---
+
+* ## 5) 建議與取捨（含優缺點）＋我給你的「最優解」路線
+
+  * ### 最優解（我會押這條）
+
+    * **先把 Phase 2A 做到“可重跑、可證明”** → 立刻進 Phase 2B（App 寫入改造）→ 再做 Mobile
+  * ### 為什麼不是直接衝 Mobile？
+
+    * 優點（先 2B 再 Mobile）
+
+      * ✅ 先把 RLS/寫入口徑固定，Mobile 才不會變成「拍得到、傳不上去」的悲劇
+      * ✅ Codex 也比較好做任務切分（schema/寫入/驗收都在 repo 有憑有據）
+    * 缺點
+
+      * ⚠️ 你會晚一點看到「拍照回報」的爽感（但能避免後面 3 倍返工）
+  * ### 你現在立刻可以做的下一步（不需要再問 LLM）
+
+    * ⬜ 用 `scripts/rls-smoke-test.mjs` 跑一輪（anon key 情境），把輸出貼回 `docs/db/phase-2a-acceptance.md`
+    * ⬜ 開 Phase 2B issue：列出「哪些 insert/update 需要補 org_id/unit_id、哪些走 server action」
+
+---
+
+如果你願意，我下一則就直接給你一份「Phase 2B 的 Issue 拆解清單（可直接貼 GitHub Issues）」——把 Web 端所有寫入點逐一點名，讓 Codex 一個一個收斂，不再靠記憶力硬撐（人類 RAM 很貴，尤其你的還要拿去談客戶😄）。
+
+[1]: https://github.com/Raymondyang171/outsource-track "GitHub - Raymondyang171/outsource-track: 工程報工/app"
+[2]: https://developers.openai.com/codex/ide/ "Codex IDE extension"
+[3]: https://help.openai.com/en/articles/10128592-how-to-install-the-work-with-apps-visual-studio-code-extension "How to install the Work with Apps Visual Studio Code extension | OpenAI Help Center"

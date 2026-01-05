@@ -1,0 +1,371 @@
+import React, { useState, useMemo, useEffect } from 'react';
+import { 
+  Calendar, 
+  ChevronRight, 
+  ChevronDown, 
+  Clock, 
+  Users, 
+  MapPin, 
+  Package, 
+  CheckCircle2,
+  AlertTriangle,
+  Info,
+  FileText,
+  Plus,
+  Settings,
+  Edit3,
+  Link as LinkIcon,
+  Save,
+  X
+} from 'lucide-react';
+
+// --- 1. 模板定義 (Templates) ---
+const FLOW_TEMPLATES = {
+  STANDARD: {
+    name: "標準工程外包模板",
+    phases: [
+      {
+        id: "P1", name: "立項階段", color: "bg-blue-500",
+        tasks: [
+          { id: "1.1", name: "需求評估與分析", duration: 10, owner: "專案經理", location: "會議室", materials: "研究報告" },
+          { id: "1.2", name: "預算編制與審批", duration: 5, owner: "財務部", location: "財務部", materials: "預算表" },
+          { id: "1.3", name: "合約起草與談判", duration: 15, owner: "法務部", location: "法務部", materials: "合約範本" },
+        ]
+      },
+      {
+        id: "P2", name: "設計階段", color: "bg-purple-500",
+        tasks: [
+          { id: "2.1", name: "設計圖紙製作", duration: 20, owner: "設計部", location: "設計公司", materials: "設計規範" },
+          { id: "2.2", name: "圖紙審查核定", duration: 8, owner: "監造單位", location: "會議室", materials: "審查記錄" },
+        ]
+      }
+    ]
+  },
+  QUICK: {
+    name: "快速維修/小工程模板",
+    phases: [
+      {
+        id: "P1", name: "快速立項", color: "bg-emerald-500",
+        tasks: [
+          { id: "1.1", name: "現場勘查與報價", duration: 2, owner: "工務組", location: "現場", materials: "報價單" },
+          { id: "1.2", name: "業主核准開工", duration: 1, owner: "專案經理", location: "辦公室", materials: "核准函" },
+        ]
+      },
+      {
+        id: "P2", name: "施工執行", color: "bg-amber-500",
+        tasks: [
+          { id: "2.1", name: "備料與進場", duration: 1, owner: "施工隊", location: "現場", materials: "工具組" },
+          { id: "2.2", name: "工程施作", duration: 3, owner: "施工隊", location: "現場", materials: "消耗品" },
+        ]
+      }
+    ]
+  }
+};
+
+const App = () => {
+  // --- 狀態管理 ---
+  const [activeTemplate, setActiveTemplate] = useState('STANDARD');
+  const [projectData, setProjectData] = useState([]);
+  const [expandedPhases, setExpandedPhases] = useState(new Set(["P1", "P2"]));
+  const [editingTask, setEditingTask] = useState(null);
+  const [projectStartDate, setProjectStartDate] = useState(new Date().toISOString().split('T')[0]);
+
+  // 初始化或切換模板
+  useEffect(() => {
+    const template = FLOW_TEMPLATES[activeTemplate];
+    const initialProject = template.phases.map(p => ({
+      ...p,
+      tasks: p.tasks.map(t => ({
+        ...t,
+        progress: 0,
+        documents: [] // { type: string, url: string, name: string, updatedAt: timestamp }
+      }))
+    }));
+    setProjectData(initialProject);
+  }, [activeTemplate]);
+
+  // --- 計算邏輯 (Process) ---
+  const processedData = useMemo(() => {
+    let currentDay = 0;
+    return projectData.map(phase => {
+      const tasksWithTime = phase.tasks.map(task => {
+        const start = currentDay;
+        currentDay += Number(task.duration);
+        return { ...task, start };
+      });
+      return { ...phase, tasks: tasksWithTime };
+    });
+  }, [projectData]);
+
+  const totalDays = processedData.reduce((acc, phase) => 
+    acc + phase.tasks.reduce((sum, task) => sum + Number(task.duration), 0), 0);
+
+  // --- 操作處理 ---
+  const updateTask = (phaseId, taskId, updates) => {
+    setProjectData(prev => prev.map(p => {
+      if (p.id !== phaseId) return p;
+      return {
+        ...p,
+        tasks: p.tasks.map(t => (t.id === taskId ? { ...t, ...updates } : t))
+      };
+    }));
+  };
+
+  const addDocument = (phaseId, taskId, docType) => {
+    const fileName = `${docType}_v${Math.floor(Math.random()*10)}.pdf`;
+    const newDoc = {
+      type: docType,
+      name: fileName,
+      url: "#",
+      updatedAt: new Date().toLocaleString()
+    };
+    
+    setProjectData(prev => prev.map(p => {
+      if (p.id !== phaseId) return p;
+      return {
+        ...p,
+        tasks: p.tasks.map(t => {
+          if (t.id !== taskId) return t;
+          return { ...t, documents: [newDoc, ...t.documents] }; // 新的放前面(最新修改)
+        })
+      };
+    }));
+  };
+
+  const dayWidth = 14;
+
+  return (
+    <div className="min-h-screen bg-slate-50 p-6 font-sans flex flex-col">
+      {/* 頂部控制列 */}
+      <header className="mb-8 flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div>
+          <h1 className="text-3xl font-bold text-slate-800 flex items-center gap-3">
+            <Settings className="text-blue-600 animate-spin-slow" size={32} />
+            工程流程管控系統 v2.0
+          </h1>
+          <p className="text-slate-500 mt-1">模組化架構 | 模板切換 | 進度回報 | 文件聯結</p>
+        </div>
+        
+        <div className="flex items-center gap-4 bg-white p-2 rounded-lg shadow-sm border border-slate-200">
+          <div className="flex flex-col px-2 border-r border-slate-100">
+            <span className="text-[10px] text-slate-400 font-bold uppercase">模板選擇</span>
+            <select 
+              className="text-sm font-medium bg-transparent outline-none"
+              value={activeTemplate}
+              onChange={(e) => setActiveTemplate(e.target.value)}
+            >
+              <option value="STANDARD">標準工程</option>
+              <option value="QUICK">快速維修</option>
+            </select>
+          </div>
+          <div className="flex flex-col px-2">
+            <span className="text-[10px] text-slate-400 font-bold uppercase">專案啟動日</span>
+            <input 
+              type="date" 
+              className="text-sm font-medium bg-transparent outline-none"
+              value={projectStartDate}
+              onChange={(e) => setProjectStartDate(e.target.value)}
+            />
+          </div>
+        </div>
+      </header>
+
+      {/* 主體內容 */}
+      <div className="flex-grow flex flex-col gap-6 lg:flex-row">
+        {/* 左側甘特圖區域 */}
+        <div className="flex-grow bg-white rounded-xl shadow-xl overflow-hidden border border-slate-200 flex flex-col">
+          <div className="flex border-b border-slate-200 bg-slate-100">
+            <div className="w-80 p-4 font-bold text-slate-700 border-r border-slate-200 flex-shrink-0">
+              流程階段 (點擊編輯)
+            </div>
+            <div className="flex-grow overflow-x-auto scrollbar-hide">
+              <div className="flex" style={{ width: `${totalDays * dayWidth}px` }}>
+                {Array.from({ length: Math.ceil(totalDays / 5) }).map((_, i) => (
+                  <div key={i} className="border-r border-slate-300 text-[10px] text-slate-400 pl-1 h-10 flex items-end pb-1" style={{ width: `${dayWidth * 5}px` }}>
+                    Day {i * 5}
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          <div className="overflow-y-auto max-h-[60vh]">
+            {processedData.map((phase) => (
+              <div key={phase.id} className="border-b border-slate-100">
+                <div className="flex items-center bg-slate-50/50 hover:bg-slate-50 cursor-pointer p-3" onClick={() => {
+                  const newSet = new Set(expandedPhases);
+                  if (newSet.has(phase.id)) newSet.delete(phase.id); else newSet.add(phase.id);
+                  setExpandedPhases(newSet);
+                }}>
+                  <div className="w-80 flex items-center gap-2 pr-4 flex-shrink-0">
+                    {expandedPhases.has(phase.id) ? <ChevronDown size={18}/> : <ChevronRight size={18}/>}
+                    <span className={`w-3 h-3 rounded-full ${phase.color}`}></span>
+                    <span className="font-bold text-slate-700">{phase.name}</span>
+                  </div>
+                </div>
+
+                {expandedPhases.has(phase.id) && phase.tasks.map((task) => (
+                  <div key={task.id} className="flex items-center hover:bg-blue-50/30 group transition-colors border-t border-slate-50">
+                    <div 
+                      className="w-80 p-3 pl-10 border-r border-slate-100 text-sm text-slate-600 flex-shrink-0 flex items-center justify-between cursor-pointer"
+                      onClick={() => setEditingTask({ phaseId: phase.id, ...task })}
+                    >
+                      <div className="flex flex-col">
+                        <span className="font-medium">{task.name}</span>
+                        <span className="text-[10px] text-slate-400 font-mono">ID: {task.id} | {task.owner}</span>
+                      </div>
+                      <Edit3 size={14} className="text-slate-300 opacity-0 group-hover:opacity-100" />
+                    </div>
+                    
+                    <div className="flex-grow relative h-12 flex items-center">
+                      <div className="absolute inset-0 flex">
+                        {Array.from({ length: totalDays }).map((_, i) => (
+                          <div key={i} className="border-r border-slate-50 h-full" style={{ width: `${dayWidth}px` }}></div>
+                        ))}
+                      </div>
+                      
+                      <div 
+                        className={`h-6 rounded-md shadow-sm relative overflow-hidden transition-all group-hover:brightness-105 ${phase.color}`}
+                        style={{ marginLeft: `${task.start * dayWidth}px`, width: `${task.duration * dayWidth}px` }}
+                      >
+                        {/* 進度填充 */}
+                        <div 
+                          className="absolute inset-y-0 left-0 bg-black/20" 
+                          style={{ width: `${task.progress}%` }}
+                        ></div>
+                        <span className="absolute inset-0 flex items-center justify-center text-[10px] text-white font-bold drop-shadow-sm">
+                          {task.progress}%
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* 右側：編輯與文件控制中心 */}
+        {editingTask ? (
+          <div className="w-full lg:w-96 bg-white rounded-xl shadow-xl border border-blue-200 overflow-hidden flex flex-col animate-in slide-in-from-right duration-300">
+            <div className="bg-blue-600 p-4 text-white flex justify-between items-center">
+              <h3 className="font-bold flex items-center gap-2">
+                <Settings size={18} /> 任務管控面板
+              </h3>
+              <button onClick={() => setEditingTask(null)}><X size={20}/></button>
+            </div>
+            
+            <div className="p-6 space-y-6 overflow-y-auto">
+              {/* 基本資訊修改 */}
+              <section className="space-y-4">
+                <h4 className="text-xs font-black text-slate-400 uppercase tracking-wider">基本屬性</h4>
+                <div>
+                  <label className="text-xs text-slate-500 mb-1 block">任務名稱</label>
+                  <input 
+                    className="w-full border rounded p-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                    value={editingTask.name}
+                    onChange={(e) => {
+                      setEditingTask({...editingTask, name: e.target.value});
+                      updateTask(editingTask.phaseId, editingTask.id, { name: e.target.value });
+                    }}
+                  />
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-xs text-slate-500 mb-1 block">預計天數</label>
+                    <input 
+                      type="number"
+                      className="w-full border rounded p-2 text-sm"
+                      value={editingTask.duration}
+                      onChange={(e) => {
+                        setEditingTask({...editingTask, duration: e.target.value});
+                        updateTask(editingTask.phaseId, editingTask.id, { duration: e.target.value });
+                      }}
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs text-slate-500 mb-1 block">負責單位</label>
+                    <input 
+                      className="w-full border rounded p-2 text-sm"
+                      value={editingTask.owner}
+                      onChange={(e) => {
+                        setEditingTask({...editingTask, owner: e.target.value});
+                        updateTask(editingTask.phaseId, editingTask.id, { owner: e.target.value });
+                      }}
+                    />
+                  </div>
+                </div>
+              </section>
+
+              {/* 進度回報 */}
+              <section className="space-y-3 bg-slate-50 p-4 rounded-lg">
+                <div className="flex justify-between items-center">
+                   <h4 className="text-xs font-black text-slate-400 uppercase tracking-wider">進度回報</h4>
+                   <span className="text-blue-600 font-bold text-sm">{editingTask.progress}%</span>
+                </div>
+                <input 
+                  type="range" className="w-full accent-blue-600"
+                  value={editingTask.progress}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setEditingTask({...editingTask, progress: val});
+                    updateTask(editingTask.phaseId, editingTask.id, { progress: val });
+                  }}
+                />
+              </section>
+
+              {/* 文件連結中心 */}
+              <section className="space-y-4">
+                <h4 className="text-xs font-black text-slate-400 uppercase tracking-wider">關聯文件 (最新版本優先)</h4>
+                <div className="flex flex-wrap gap-2">
+                  {['合約', '設計圖', '領料單', '結算單'].map(type => (
+                    <button 
+                      key={type}
+                      onClick={() => addDocument(editingTask.phaseId, editingTask.id, type)}
+                      className="text-[10px] bg-white border border-slate-300 px-2 py-1 rounded hover:bg-slate-50 flex items-center gap-1 shadow-sm"
+                    >
+                      <Plus size={10}/> {type}
+                    </button>
+                  ))}
+                </div>
+                
+                <div className="space-y-2 max-h-48 overflow-y-auto">
+                  {editingTask.documents?.length > 0 ? (
+                    editingTask.documents.map((doc, idx) => (
+                      <div key={idx} className={`p-3 rounded border flex items-center justify-between transition-all ${idx === 0 ? 'bg-blue-50 border-blue-200' : 'bg-white border-slate-100'}`}>
+                        <div className="flex items-center gap-3 overflow-hidden">
+                          <div className={`p-2 rounded ${idx === 0 ? 'bg-blue-500 text-white' : 'bg-slate-200 text-slate-500'}`}>
+                            <FileText size={16}/>
+                          </div>
+                          <div className="flex flex-col overflow-hidden">
+                            <span className="text-xs font-bold truncate">{doc.name}</span>
+                            <span className="text-[10px] text-slate-400 italic">{doc.updatedAt}</span>
+                          </div>
+                        </div>
+                        {idx === 0 && <span className="text-[9px] bg-blue-100 text-blue-700 px-1 rounded font-bold">LATEST</span>}
+                      </div>
+                    ))
+                  ) : (
+                    <div className="text-center py-6 border-2 border-dashed border-slate-100 rounded-lg">
+                      <LinkIcon className="mx-auto text-slate-200 mb-2" size={24}/>
+                      <p className="text-xs text-slate-400">尚未上傳任何文件</p>
+                    </div>
+                  )}
+                </div>
+              </section>
+            </div>
+          </div>
+        ) : (
+          <div className="hidden lg:flex w-96 bg-slate-100 rounded-xl border-2 border-dashed border-slate-200 items-center justify-center p-8 text-center">
+            <div className="space-y-2">
+              <Info className="mx-auto text-slate-300" size={48} />
+              <p className="text-slate-400 font-medium">點擊左側任務名稱<br/>進行詳細控管與報工</p>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+export default App;

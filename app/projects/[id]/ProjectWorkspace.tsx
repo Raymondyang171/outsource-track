@@ -40,10 +40,28 @@ type TaskFlag = {
   offset_hours: number;
 };
 
+type DriveItem = {
+  id: string;
+  project_task_id: string;
+  name: string;
+  web_view_link: string;
+  thumbnail_link: string | null;
+  mime_type: string | null;
+};
+
+type FileItem = {
+  id: string;
+  name: string;
+  url: string;
+  thumbnailLink?: string | null;
+  mimeType?: string | null;
+};
+
 type Props = {
   project: Project;
   tasks: Task[];
   role: string | null;
+  driveItems: DriveItem[];
 };
 
 const tabs = [
@@ -93,7 +111,31 @@ const mockTasks: Task[] = [
   },
 ];
 
-export default function ProjectWorkspace({ project, tasks, role }: Props) {
+function groupDriveItems(items: DriveItem[]) {
+  const grouped: Record<string, FileItem[]> = {};
+  items.forEach((item) => {
+    if (!item.project_task_id) return;
+    const entry: FileItem = {
+      id: item.id,
+      name: item.name,
+      url: item.web_view_link,
+      thumbnailLink: item.thumbnail_link,
+      mimeType: item.mime_type,
+    };
+    if (!grouped[item.project_task_id]) {
+      grouped[item.project_task_id] = [];
+    }
+    grouped[item.project_task_id].push(entry);
+  });
+  return grouped;
+}
+
+function getThumbnailSrc(file: FileItem) {
+  if (!file.thumbnailLink) return null;
+  return `/api/drive/thumbnail?item_id=${encodeURIComponent(file.id)}`;
+}
+
+export default function ProjectWorkspace({ project, tasks, role, driveItems }: Props) {
   const isViewer = role === "viewer";
   const [activeTab, setActiveTab] = useState("dashboard");
   const [panelOpen, setPanelOpen] = useState(false);
@@ -154,9 +196,9 @@ export default function ProjectWorkspace({ project, tasks, role }: Props) {
       ? tasks.map((task) => normalizeTask(task))
       : mockTasks;
   const [localTasks, setLocalTasks] = useState<Task[]>(initialTasks);
-  const [filesByTask, setFilesByTask] = useState<
-    Record<string, Array<{ name: string; url: string }>>
-  >({});
+  const [filesByTask, setFilesByTask] = useState<Record<string, FileItem[]>>(
+    () => groupDriveItems(driveItems)
+  );
   const [logsByTask, setLogsByTask] = useState<
     Record<string, Array<{ time: string; note: string; progress: number }>>
   >({});
@@ -416,11 +458,10 @@ export default function ProjectWorkspace({ project, tasks, role }: Props) {
     setPanelOpen(true);
   }
 
-  function addFile(taskId: string, name: string, url: string) {
-    if (!name || !url) return;
+  function addUploadedFile(taskId: string, item: FileItem) {
     setFilesByTask((prev) => ({
       ...prev,
-      [taskId]: [...(prev[taskId] ?? []), { name, url }],
+      [taskId]: [item, ...(prev[taskId] ?? [])],
     }));
   }
 
@@ -1065,14 +1106,24 @@ export default function ProjectWorkspace({ project, tasks, role }: Props) {
                 {(filesByTask[task.id] ?? []).length === 0 && (
                   <div className="page-subtitle">尚無檔案</div>
                 )}
-                {(filesByTask[task.id] ?? []).map((file, index) => (
-                  <div className="task-card" key={`${file.url}-${index}`}>
-                    <div>{file.name}</div>
-                    <a className="page-subtitle" href={file.url} target="_blank" rel="noreferrer">
-                      {file.url}
-                    </a>
-                  </div>
-                ))}
+                {(filesByTask[task.id] ?? []).map((file) => {
+                  const thumbSrc = getThumbnailSrc(file);
+                  return (
+                    <div className="file-item" key={file.id}>
+                      {thumbSrc ? (
+                        <img className="file-thumb" src={thumbSrc} alt={file.name} loading="lazy" />
+                      ) : (
+                        <div className="file-thumb file-thumb-fallback">FILE</div>
+                      )}
+                      <div className="file-meta">
+                        <div className="file-title">{file.name}</div>
+                        <a className="page-subtitle" href={file.url} target="_blank" rel="noreferrer">
+                          {file.url}
+                        </a>
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             ))}
           </div>
@@ -1232,17 +1283,31 @@ export default function ProjectWorkspace({ project, tasks, role }: Props) {
                 <div className="card-header">
                   <div className="card-title">文件連結</div>
                 </div>
-                <FileForm onAdd={(name, url) => addFile(selectedTask.id, name, url)} disabled={isViewer} />
+                <FileUploadForm
+                  taskId={selectedTask.id}
+                  onUploaded={(item) => addUploadedFile(selectedTask.id, item)}
+                  disabled={isViewer}
+                />
                 <div className="page-subtitle">目前連結數量 {filesByTask[selectedTask.id]?.length ?? 0}</div>
                 <div>
-                  {(filesByTask[selectedTask.id] ?? []).map((file, index) => (
-                    <div className="task-card" key={`${file.url}-${index}`}>
-                      <div>{file.name}</div>
-                      <a className="page-subtitle" href={file.url} target="_blank" rel="noreferrer">
-                        {file.url}
-                      </a>
-                    </div>
-                  ))}
+                  {(filesByTask[selectedTask.id] ?? []).map((file) => {
+                    const thumbSrc = getThumbnailSrc(file);
+                    return (
+                      <div className="file-item" key={file.id}>
+                        {thumbSrc ? (
+                          <img className="file-thumb" src={thumbSrc} alt={file.name} loading="lazy" />
+                        ) : (
+                          <div className="file-thumb file-thumb-fallback">FILE</div>
+                        )}
+                        <div className="file-meta">
+                          <div className="file-title">{file.name}</div>
+                          <a className="page-subtitle" href={file.url} target="_blank" rel="noreferrer">
+                            {file.url}
+                          </a>
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
 
@@ -1270,41 +1335,113 @@ export default function ProjectWorkspace({ project, tasks, role }: Props) {
   );
 }
 
-function FileForm({
-  onAdd,
+function FileUploadForm({
+  taskId,
+  onUploaded,
   disabled,
 }: {
-  onAdd: (name: string, url: string) => void;
+  taskId: string;
+  onUploaded: (item: FileItem) => void;
   disabled?: boolean;
 }) {
-  const [name, setName] = useState("");
-  const [url, setUrl] = useState("");
+  const driveFolderUrl = process.env.NEXT_PUBLIC_GOOGLE_DRIVE_FOLDER_URL;
+  const driveFolderName = process.env.NEXT_PUBLIC_GOOGLE_DRIVE_FOLDER_NAME ?? "Google Drive";
+  const [displayName, setDisplayName] = useState("");
+  const [file, setFile] = useState<File | null>(null);
+  const [message, setMessage] = useState("");
+  const [isUploading, setIsUploading] = useState(false);
+
+  async function handleUpload() {
+    setMessage("");
+    if (!file) {
+      setMessage("請先選擇檔案");
+      return;
+    }
+
+    setIsUploading(true);
+    try {
+      const formData = new FormData();
+      formData.append("task_id", taskId);
+      formData.append("display_name", displayName);
+      formData.append("file", file);
+      const res = await fetch("/api/drive/upload", {
+        method: "POST",
+        body: formData,
+      });
+
+      const rawText = await res.text();
+      let payload: any = null;
+      try {
+        payload = rawText ? JSON.parse(rawText) : null;
+      } catch {
+        payload = null;
+      }
+      if (!res.ok) {
+        const errorKey = payload?.error ?? "upload_failed";
+        const friendlyMessages: Record<string, string> = {
+          missing_google_oauth:
+            "尚未設定 Google Drive OAuth，請先設定 GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET / GOOGLE_REFRESH_TOKEN。",
+          not_authenticated: "尚未登入，請先登入後再上傳。",
+          file_too_large: "檔案超過 10MB 限制，請縮小後再試。",
+          image_too_large: "圖片壓縮後仍超過 10MB，請縮小後再試。",
+          unauthorized_client:
+            "Google OAuth 未被授權（unauthorized_client）。請確認 OAuth 憑證類型與已授權的重新導向 URI。",
+        };
+        if (!payload && rawText) {
+          setMessage(`upload_failed: ${rawText}`);
+        } else {
+          setMessage(friendlyMessages[errorKey] ?? errorKey);
+        }
+        return;
+      }
+
+      if (payload?.item) {
+        onUploaded({
+          id: payload.item.id,
+          name: payload.item.name,
+          url: payload.item.web_view_link,
+          thumbnailLink: payload.item.thumbnail_link,
+          mimeType: payload.item.mime_type,
+        });
+      }
+
+      setDisplayName("");
+      setFile(null);
+      setMessage("上傳成功");
+    } catch (err: any) {
+      setMessage(err?.message ?? "upload_failed");
+    } finally {
+      setIsUploading(false);
+    }
+  }
 
   return (
     <div className="admin-form-grid" style={{ padding: 0, border: "none" }}>
       <input
-        placeholder="檔案名稱"
-        value={name}
-        onChange={(e) => setName(e.target.value)}
-        disabled={disabled}
+        placeholder="檔案名稱（選填）"
+        value={displayName}
+        onChange={(e) => setDisplayName(e.target.value)}
+        disabled={disabled || isUploading}
       />
       <input
-        placeholder="貼上 web view link"
-        value={url}
-        onChange={(e) => setUrl(e.target.value)}
-        disabled={disabled}
+        type="file"
+        accept=".pdf,.doc,.docx,.xls,.xlsx,image/*"
+        onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+        disabled={disabled || isUploading}
       />
-      <button
-        type="button"
-        onClick={() => {
-          onAdd(name, url);
-          setName("");
-          setUrl("");
-        }}
-        disabled={disabled}
-      >
-        新增連結
+      <button type="button" onClick={handleUpload} disabled={disabled || isUploading}>
+        {isUploading ? "上傳中..." : "上傳到 Google Drive"}
       </button>
+      <div className="page-subtitle">圖片超過 2MB 會壓縮，其他檔案上限 10MB。</div>
+      {driveFolderUrl && (
+        <div className="page-subtitle">
+          上傳到：
+          <a href={driveFolderUrl} target="_blank" rel="noreferrer">
+            {driveFolderName}
+          </a>
+        </div>
+      )}
+      {message && <div className="page-subtitle">{message}</div>}
     </div>
   );
 }

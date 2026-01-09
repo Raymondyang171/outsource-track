@@ -50,11 +50,14 @@ This maps UI fields to Supabase tables/columns. Any gaps should be resolved befo
 | Document name | drive_items.name | display title |
 | Document type | drive_items.mime_type | or map to UI type |
 | Document link | drive_items.web_view_link | link to GDrive |
+| Thumbnail link | drive_items.thumbnail_link | stored from GDrive thumbnailLink |
 | File id | drive_items.drive_file_id | GDrive ID |
 | Updated time | drive_items.modified_time | from GDrive |
 | Uploaded by | drive_items.uploaded_by | profiles.user_id |
 | Task | drive_items.project_task_id | FK |
 | Org / Unit | drive_items.org_id / unit_id | required |
+| File size | drive_items.file_size_bytes | stored size after compression |
+| Original size | drive_items.original_size_bytes | pre-compression size |
 
 ## Membership / Identity
 | UI Field | Table.Column | Notes |

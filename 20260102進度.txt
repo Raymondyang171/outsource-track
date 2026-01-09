@@ -1,3 +1,24 @@
+* ## 6) 近幾天進度（Drive 檔案上傳 + UI 調整 + 安全檢查）
+
+  * ### 完成事項
+
+    * 新增 Google Drive 上傳 API（`app/api/drive/upload/route.ts`）：10MB 限制、圖片超過 2MB 自動壓縮，寫入 `drive_items`
+    * 新增縮圖代理 API（`app/api/drive/thumbnail/route.ts`）：需登入、使用 OAuth token 抓縮圖
+    * Project Workspace 串接 `drive_items`：列表與面板顯示縮圖/連結，上傳表單改成檔案上傳
+    * UI/導航：側欄抽屜（行動版）與 topbar 排版調整
+    * DB/文件：新增 `docs/db/drive-items-migration.sql`，更新 `docs/db/data-contract.md`
+    * 依賴更新：新增 `googleapis`、`sharp`
+    * 安全檢查：未發現硬編碼 key；`.env.local` 含敏感值但未被 git 追蹤
+
+  * ### 完成步驟
+
+    * 建立/更新 API route + UI 元件
+    * 新增 DB migration 與 data contract
+    * 更新套件依賴
+    * 確認 `.env*` 已在 `.gitignore`
+
+---
+
 * ## 1) 依「附件兩份起始文件」檢查：目前夠用，但**還需要補 3 塊關鍵治理**（不補會讓 Codex/LLM 很容易斷線）
 
   * ### 1.1 你這兩份文件目前已經清楚的地方（✅可直接當起始點）

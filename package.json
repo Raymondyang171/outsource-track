@@ -15,10 +15,12 @@
     "@supabase/supabase-js": "^2.89.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
+    "googleapis": "^140.0.1",
     "lucide-react": "^0.562.0",
     "next": "16.1.1",
     "react": "19.2.3",
     "react-dom": "19.2.3",
+    "sharp": "^0.33.5",
     "tailwind-merge": "^3.4.0"
   },
   "devDependencies": {

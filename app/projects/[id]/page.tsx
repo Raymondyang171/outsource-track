@@ -53,11 +53,28 @@ export default async function ProjectDetailPage({
     .eq("project_id", projectId)
     .order("seq", { ascending: true });
 
+  const taskIds = (tasks ?? []).map((task) => task.id);
+  const { data: driveItems, error: dErr } = taskIds.length
+    ? await supabase
+        .from("drive_items")
+        .select("id, project_task_id, name, web_view_link, thumbnail_link, mime_type")
+        .in("project_task_id", taskIds)
+        .order("modified_time", { ascending: false })
+    : { data: [], error: null };
+
   return (
     <div className="page">
       {pErr && <div className="admin-error">{pErr.message}</div>}
       {tErr && <div className="admin-error">{tErr.message}</div>}
-      {project && <ProjectWorkspace project={project} tasks={tasks ?? []} role={role} />}
+      {dErr && <div className="admin-error">{dErr.message}</div>}
+      {project && (
+        <ProjectWorkspace
+          project={project}
+          tasks={tasks ?? []}
+          role={role}
+          driveItems={driveItems ?? []}
+        />
+      )}
       {!project && !pErr && <div className="card">找不到專案資料。</div>}
     </div>
   );

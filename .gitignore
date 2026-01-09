@@ -43,3 +43,6 @@ next-env.d.ts
 # local temp
 .tmp/
 supabase/.temp/
+
+# Local backups (do NOT commit)
+/backups/codex_sessions/

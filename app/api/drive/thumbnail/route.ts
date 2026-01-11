@@ -35,11 +35,11 @@ export async function GET(request: Request) {
 
   const { data: item, error: itemErr } = await supabase
     .from("drive_items")
-    .select("thumbnail_link")
+    .select("thumbnail_link, drive_file_id")
     .eq("id", itemId)
     .maybeSingle();
 
-  if (itemErr || !item?.thumbnail_link) {
+  if (itemErr) {
     return NextResponse.json({ ok: false, error: "thumbnail_not_found" }, { status: 404 });
   }
 
@@ -48,13 +48,38 @@ export async function GET(request: Request) {
     return NextResponse.json({ ok: false, error: "missing_google_oauth" }, { status: 500 });
   }
 
+  const drive = google.drive({ version: "v3", auth: oauth });
+
+  let thumbnailLink = item?.thumbnail_link ?? null;
+  if (!thumbnailLink && item?.drive_file_id) {
+    try {
+      const fileRes = await drive.files.get({
+        fileId: item.drive_file_id,
+        fields: "thumbnailLink",
+      });
+      thumbnailLink = fileRes.data.thumbnailLink ?? null;
+      if (thumbnailLink) {
+        await supabase
+          .from("drive_items")
+          .update({ thumbnail_link: thumbnailLink })
+          .eq("id", itemId);
+      }
+    } catch {
+      // ignore thumbnail refresh errors
+    }
+  }
+
+  if (!thumbnailLink) {
+    return NextResponse.json({ ok: false, error: "thumbnail_not_found" }, { status: 404 });
+  }
+
   const token = await oauth.getAccessToken();
   const accessToken = token?.token;
   if (!accessToken) {
     return NextResponse.json({ ok: false, error: "access_token_failed" }, { status: 502 });
   }
 
-  const thumbRes = await fetch(item.thumbnail_link, {
+  const thumbRes = await fetch(thumbnailLink, {
     headers: { Authorization: `Bearer ${accessToken}` },
   });
 

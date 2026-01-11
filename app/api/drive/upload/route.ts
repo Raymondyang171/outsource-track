@@ -3,6 +3,8 @@ import { google } from "googleapis";
 import { Readable } from "stream";
 import sharp from "sharp";
 import { createServerSupabase } from "@/lib/supabase/server";
+import { createAdminSupabase } from "@/lib/supabase/admin";
+import { checkPermission } from "@/lib/permissions";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -109,7 +111,14 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: false, error: "not_authenticated" }, { status: 401 });
   }
 
-  const { data: task, error: taskErr } = await supabase
+  let admin;
+  try {
+    admin = createAdminSupabase();
+  } catch (e: any) {
+    return NextResponse.json({ ok: false, error: "missing_service_role_key" }, { status: 500 });
+  }
+
+  const { data: task, error: taskErr } = await admin
     .from("project_tasks")
     .select("id, org_id, unit_id")
     .eq("id", taskId)
@@ -121,6 +130,11 @@ export async function POST(request: Request) {
 
   if (!task.org_id || !task.unit_id) {
     return NextResponse.json({ ok: false, error: "task_missing_org_unit" }, { status: 400 });
+  }
+
+  const allowed = await checkPermission(admin, authData.user.id, task.org_id, "files", "create");
+  if (!allowed) {
+    return NextResponse.json({ ok: false, error: "permission_denied" }, { status: 403 });
   }
 
   const inputBuffer = Buffer.from(await file.arrayBuffer());
@@ -187,7 +201,7 @@ export async function POST(request: Request) {
     original_size_bytes: originalSizeBytes,
   };
 
-  const { data: inserted, error: insertErr } = await supabase
+  const { data: inserted, error: insertErr } = await admin
     .from("drive_items")
     .insert(insertPayload)
     .select("id, project_task_id, name, web_view_link, thumbnail_link, mime_type")

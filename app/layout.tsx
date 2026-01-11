@@ -3,6 +3,8 @@ import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { createServerSupabase } from "@/lib/supabase/server";
 import ThemeSwitcher from "@/components/theme-switcher";
+import LogoutButton from "@/components/logout-button";
+import SidebarToggle from "@/components/sidebar-toggle";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -18,6 +20,7 @@ export const metadata: Metadata = {
   title: "Outsource Track",
   description: "Asana-style project workspace for outsource teams.",
 };
+export const dynamic = "force-dynamic";
 
 export default async function RootLayout({
   children,
@@ -36,6 +39,9 @@ export default async function RootLayout({
       </a>
       <a className="nav-item" href="/projects">
         專案
+      </a>
+      <a className="nav-item" href="/dashboard">
+        儀表板
       </a>
       {!user && (
         <a className="nav-item" href="/login">
@@ -56,18 +62,18 @@ export default async function RootLayout({
           </details>
 
           <details className="nav-group">
-            <summary className="nav-summary">組織設定</summary>
+            <summary className="nav-summary">公司設定</summary>
             <a className="nav-item" href="/admin/users">
               使用者
             </a>
-            <a className="nav-item" href="/admin/memberships">
-              成員權限
+            <a className="nav-item" href="/admin/roles">
+              權限設定
             </a>
             <a className="nav-item" href="/admin/orgs">
-              組織
+              公司
             </a>
             <a className="nav-item" href="/admin/units">
-              單位
+              部門
             </a>
           </details>
         </>
@@ -98,7 +104,9 @@ export default async function RootLayout({
       <body className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
         <div className="app-shell">
           <aside className="app-sidebar">
-            {sidebarContent}
+            <div className="sidebar-mini">OT</div>
+            <div className="sidebar-content">{sidebarContent}</div>
+            <SidebarToggle />
           </aside>
 
           <div className="app-frame">
@@ -111,13 +119,16 @@ export default async function RootLayout({
                     </span>
                     <span className="drawer-label">選單</span>
                   </summary>
-                  <div className="drawer-panel">{sidebarContent}</div>
+                  <div className="drawer-panel">
+                    <div className="sidebar-content">{sidebarContent}</div>
+                  </div>
                 </details>
                 <input className="search-input" placeholder="搜尋專案、任務或成員" />
                 <span className="badge">Workspace</span>
               </div>
               <div className="topbar-right">
                 <ThemeSwitcher />
+                {user && <LogoutButton className="btn btn-ghost" />}
                 <a className="btn btn-ghost" href="/admin/projects">
                   新建專案
                 </a>

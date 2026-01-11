@@ -46,3 +46,16 @@ supabase/.temp/
 
 # Local backups (do NOT commit)
 /backups/codex_sessions/
+
+# Local transcripts/backups (do NOT commit)
+/backups/codex_transcripts/
+
+# Local Codex transcripts (do NOT commit)
+/backups/codex_transcripts/
+
+# Secrets / local creds
+.pgpass
+*.pgpass
+.env
+.env.*
+.tmp/

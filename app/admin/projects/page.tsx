@@ -1,10 +1,55 @@
 import { redirect } from "next/navigation";
 import { createServerSupabase } from "@/lib/supabase/server";
 import { createAdminSupabase } from "@/lib/supabase/admin";
+import { checkPermission, getPermissionsForResource } from "@/lib/permissions";
 
 export const dynamic = "force-dynamic";
 
-export default async function AdminProjectsPage() {
+async function createProjectAction(formData: FormData) {
+  "use server";
+
+  const supabase = await createServerSupabase();
+  const { data } = await supabase.auth.getUser();
+  const user = data.user;
+  if (!user) {
+    redirect("/login");
+  }
+
+  const formOrgId = String(formData.get("org_id") ?? "").trim();
+  const unitId = String(formData.get("unit_id") ?? "").trim();
+  const name = String(formData.get("name") ?? "").trim();
+  const startDate = String(formData.get("start_date") ?? "").trim();
+  const status = String(formData.get("status") ?? "").trim();
+  if (!formOrgId || !unitId || !name) return;
+  const adminClient = createAdminSupabase();
+  const allowed = await checkPermission(adminClient, user.id, formOrgId, "projects", "create");
+  if (!allowed) {
+    redirect(`/admin/projects?error=${encodeURIComponent("permission_denied")}`);
+  }
+  await adminClient.from("projects").insert({
+    org_id: formOrgId,
+    unit_id: unitId,
+    name,
+    start_date: startDate || undefined,
+    status: status || undefined,
+  });
+  redirect(`/admin/projects?ok=created`);
+}
+
+type PageProps = {
+  searchParams?: Promise<Record<string, string | string[] | undefined>>;
+};
+
+function getParam(value: string | string[] | undefined) {
+  return Array.isArray(value) ? value[0] : value;
+}
+
+export default async function AdminProjectsPage({ searchParams }: PageProps) {
+  const sp = await searchParams;
+  const ok = getParam(sp?.ok);
+  const errorMsg = getParam(sp?.error);
+  const okMsg = ok === "created" ? "已新增專案。" : null;
+
   const supabase = await createServerSupabase();
   const { data } = await supabase.auth.getUser();
   const user = data.user;
@@ -43,60 +88,49 @@ export default async function AdminProjectsPage() {
 
   const orgId = myMems?.[0]?.org_id ?? null;
 
-  const { data: orgs, error: orgErr } = orgId
-    ? await admin.from("orgs").select("id, name").eq("id", orgId)
-    : await admin.from("orgs").select("id, name");
+  const { data: orgs, error: orgErr } = await admin.from("orgs").select("id, name");
 
-  const { data: units, error: unitErr } = orgId
-    ? await admin.from("units").select("id, name, org_id").eq("org_id", orgId).order("name", { ascending: true })
-    : await admin.from("units").select("id, name, org_id").order("name", { ascending: true });
+  const { data: units, error: unitErr } = await admin
+    .from("units")
+    .select("id, name, org_id")
+    .order("name", { ascending: true });
 
-  const { data: projects, error } = orgId
-    ? await admin
-        .from("projects")
-        .select("id, name, org_id, unit_id, start_date, status, created_at")
-        .eq("org_id", orgId)
-        .order("created_at", { ascending: false })
-    : await admin
-        .from("projects")
-        .select("id, name, org_id, unit_id, start_date, status, created_at")
-        .order("created_at", { ascending: false });
+  const { data: projects, error } = await admin
+    .from("projects")
+    .select("id, name, org_id, unit_id, start_date, status, created_at")
+    .order("created_at", { ascending: false });
+
+  const projectPerms = await getPermissionsForResource(admin, user.id, orgId, "projects");
+  const canRead = projectPerms.permissions?.read ?? false;
+  const canCreate = projectPerms.permissions?.create ?? false;
 
   const orgNameById = Object.fromEntries((orgs ?? []).map((org) => [org.id, org.name]));
   const unitNameById = Object.fromEntries((units ?? []).map((unit) => [unit.id, unit.name]));
 
+  if (!canRead) {
+    return (
+      <div className="admin-page">
+        <h1>專案管理</h1>
+        <p className="admin-error">目前角色沒有檢視權限。</p>
+      </div>
+    );
+  }
+
   return (
     <div className="admin-page">
       <h1>專案管理</h1>
-      {!orgId && <p>尚未綁定組織，暫時顯示全部資料。</p>}
+      {!orgId && <p>尚未綁定公司，暫時顯示全部資料。</p>}
+      {okMsg && <p className="admin-success">{okMsg}</p>}
+      {errorMsg && <p className="admin-error">{decodeURIComponent(errorMsg)}</p>}
       {orgErr && <p className="admin-error">{orgErr.message}</p>}
       {unitErr && <p className="admin-error">{unitErr.message}</p>}
       {error && <p className="admin-error">{error.message}</p>}
       {!error && (!projects || projects.length === 0) && <p>目前沒有專案。</p>}
 
-      {!error && (
-        <form
-          className="admin-form"
-          action={async (formData) => {
-            "use server";
-            const formOrgId = String(formData.get("org_id") ?? "").trim();
-            const unitId = String(formData.get("unit_id") ?? "").trim();
-            const name = String(formData.get("name") ?? "").trim();
-            const startDate = String(formData.get("start_date") ?? "").trim();
-            const status = String(formData.get("status") ?? "").trim();
-            if (!formOrgId || !unitId || !name) return;
-            const adminClient = createAdminSupabase();
-            await adminClient.from("projects").insert({
-              org_id: formOrgId,
-              unit_id: unitId,
-              name,
-              start_date: startDate || undefined,
-              status: status || undefined,
-            });
-          }}
-        >
+      {!error && canCreate && (
+        <form className="admin-form" action={createProjectAction}>
           <select name="org_id" defaultValue={orgId ?? ""}>
-            <option value="">選擇組織</option>
+            <option value="">選擇公司</option>
             {(orgs ?? []).map((org) => (
               <option key={org.id} value={org.id}>
                 {org.name}
@@ -104,7 +138,7 @@ export default async function AdminProjectsPage() {
             ))}
           </select>
           <select name="unit_id" defaultValue="">
-            <option value="">選擇單位</option>
+            <option value="">選擇部門</option>
             {(units ?? []).map((unit) => (
               <option key={unit.id} value={unit.id}>
                 {unit.name}
@@ -123,8 +157,9 @@ export default async function AdminProjectsPage() {
           <thead>
             <tr>
               <th>專案</th>
-              <th>組織</th>
-              <th>單位</th>
+              <th>公司</th>
+              <th>部門</th>
+              <th>操作</th>
               <th>開始日</th>
               <th>狀態</th>
               <th>建立時間</th>
@@ -136,6 +171,11 @@ export default async function AdminProjectsPage() {
                 <td>{p.name}</td>
                 <td>{orgNameById[p.org_id] ?? "-"}</td>
                 <td>{unitNameById[p.unit_id] ?? "-"}</td>
+                <td>
+                  <a className="btn btn-ghost" href={`/admin/tasks?project_id=${p.id}`}>
+                    編輯任務
+                  </a>
+                </td>
                 <td>{p.start_date}</td>
                 <td>{p.status}</td>
                 <td>{new Date(p.created_at).toLocaleString()}</td>

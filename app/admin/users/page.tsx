@@ -1,10 +1,14 @@
 import { redirect } from "next/navigation";
 import { createServerSupabase } from "@/lib/supabase/server";
 import { createAdminSupabase } from "@/lib/supabase/admin";
+import ConfirmForm from "@/components/confirm-form";
+import { checkPermission, getPermissionsForResource } from "@/lib/permissions";
 
 type PageProps = {
   searchParams?: Promise<Record<string, string | string[] | undefined>>;
 };
+
+const roleOptions = ["manager", "member", "viewer", "admin"];
 
 function getParam(value: string | string[] | undefined) {
   return Array.isArray(value) ? value[0] : value;
@@ -23,6 +27,13 @@ function emailToDisplayName(email: string | null | undefined) {
 async function createUserAction(formData: FormData) {
   "use server";
 
+  const supabase = await createServerSupabase();
+  const { data } = await supabase.auth.getUser();
+  const authedUser = data.user;
+  if (!authedUser) {
+    redirect("/login");
+  }
+
   const email = String(formData.get("email") ?? "").trim();
   const password = String(formData.get("password") ?? "").trim();
   const displayName = String(formData.get("display_name") ?? "").trim();
@@ -39,6 +50,11 @@ async function createUserAction(formData: FormData) {
     admin = createAdminSupabase();
   } catch (e: any) {
     redirect(`/admin/users?error=${encodeMsg(e.message ?? "missing service role key")}`);
+  }
+
+  const allowed = await checkPermission(admin, authedUser.id, null, "users", "create");
+  if (!allowed) {
+    redirect(`/admin/users?error=${encodeMsg("permission_denied")}`);
   }
 
   const { data: created, error: createErr } = await admin.auth.admin.createUser({
@@ -81,10 +97,116 @@ async function createUserAction(formData: FormData) {
   redirect(`/admin/users?ok=1`);
 }
 
+async function updateMembershipRoleAction(formData: FormData) {
+  "use server";
+
+  const supabase = await createServerSupabase();
+  const { data } = await supabase.auth.getUser();
+  const authedUser = data.user;
+  if (!authedUser) {
+    redirect("/login");
+  }
+
+  const orgId = String(formData.get("org_id") ?? "").trim();
+  const currentUnitId = String(formData.get("current_unit_id") ?? "").trim();
+  const unitId = String(formData.get("unit_id") ?? "").trim();
+  const userId = String(formData.get("user_id") ?? "").trim();
+  const role = String(formData.get("role") ?? "").trim();
+  const displayName = String(formData.get("display_name") ?? "").trim();
+
+  if (!orgId || !currentUnitId || !unitId || !userId || !role) {
+    redirect(`/admin/users?error=${encodeMsg("missing membership fields")}`);
+  }
+
+  let admin;
+  try {
+    admin = createAdminSupabase();
+  } catch (e: any) {
+    redirect(`/admin/users?error=${encodeMsg(e.message ?? "missing service role key")}`);
+  }
+
+  const canUpdateMemberships = await checkPermission(admin, authedUser.id, orgId, "memberships", "update");
+  if (!canUpdateMemberships) {
+    redirect(`/admin/users?error=${encodeMsg("permission_denied")}`);
+  }
+
+  const canUpdateUsers = await checkPermission(admin, authedUser.id, orgId, "users", "update");
+  if (displayName && canUpdateUsers) {
+    await admin
+      .from("profiles")
+      .upsert({ user_id: userId, display_name: displayName }, { onConflict: "user_id" });
+  }
+
+  const { error } = await admin
+    .from("memberships")
+    .update({ role, unit_id: unitId })
+    .eq("org_id", orgId)
+    .eq("unit_id", currentUnitId)
+    .eq("user_id", userId);
+
+  if (error) {
+    redirect(`/admin/users?error=${encodeMsg(`role update failed: ${error.message}`)}`);
+  }
+
+  redirect(`/admin/users?ok=membership_updated`);
+}
+
+async function deleteMembershipAction(formData: FormData) {
+  "use server";
+
+  const supabase = await createServerSupabase();
+  const { data } = await supabase.auth.getUser();
+  const authedUser = data.user;
+  if (!authedUser) {
+    redirect("/login");
+  }
+
+  const orgId = String(formData.get("org_id") ?? "").trim();
+  const unitId = String(formData.get("unit_id") ?? "").trim();
+  const userId = String(formData.get("user_id") ?? "").trim();
+
+  if (!orgId || !unitId || !userId) {
+    redirect(`/admin/users?error=${encodeMsg("missing membership fields")}`);
+  }
+
+  let admin;
+  try {
+    admin = createAdminSupabase();
+  } catch (e: any) {
+    redirect(`/admin/users?error=${encodeMsg(e.message ?? "missing service role key")}`);
+  }
+
+  const allowed = await checkPermission(admin, authedUser.id, orgId, "memberships", "delete");
+  if (!allowed) {
+    redirect(`/admin/users?error=${encodeMsg("permission_denied")}`);
+  }
+
+  const { error } = await admin
+    .from("memberships")
+    .delete()
+    .eq("org_id", orgId)
+    .eq("unit_id", unitId)
+    .eq("user_id", userId);
+
+  if (error) {
+    redirect(`/admin/users?error=${encodeMsg(`delete membership failed: ${error.message}`)}`);
+  }
+
+  redirect(`/admin/users?ok=membership_deleted`);
+}
+
 export default async function AdminUsersPage({ searchParams }: PageProps) {
   const sp = await searchParams;
   const ok = getParam(sp?.ok);
   const error = getParam(sp?.error);
+  const okMsg =
+    ok === "1"
+      ? "已建立使用者。"
+      : ok === "membership_updated"
+        ? "已更新成員資料。"
+        : ok === "membership_deleted"
+          ? "已刪除成員。"
+          : null;
 
   const supabase = await createServerSupabase();
   const { data } = await supabase.auth.getUser();
@@ -120,6 +242,11 @@ export default async function AdminUsersPage({ searchParams }: PageProps) {
   let orgNameById: Record<string, string> = {};
   let unitNameById: Record<string, string> = {};
   let userNameById: Record<string, string> = {};
+  let userEmailById: Record<string, string> = {};
+  let canReadUsers = true;
+  let canCreateUsers = false;
+  let canUpdateMemberships = false;
+  let canDeleteMemberships = false;
 
   if (user) {
     if (!missingKey) {
@@ -128,6 +255,7 @@ export default async function AdminUsersPage({ searchParams }: PageProps) {
         const { data: listRes } = await admin.auth.admin.listUsers({ perPage: 1000 });
         const users = listRes?.users ?? [];
         const userIds = users.map((u) => u.id);
+        userEmailById = Object.fromEntries(users.map((u) => [u.id, u.email ?? ""]));
         if (userIds.length > 0) {
           const { data: profileList } = await admin
             .from("profiles")
@@ -173,6 +301,20 @@ export default async function AdminUsersPage({ searchParams }: PageProps) {
       membershipsError = "no_org_membership";
     } else {
       orgId = myMems[0].org_id;
+    }
+
+    if (!missingKey) {
+      try {
+        const permClient = createAdminSupabase();
+        const userPerms = await getPermissionsForResource(permClient, user.id, orgId, "users");
+        const membershipPerms = await getPermissionsForResource(permClient, user.id, orgId, "memberships");
+        canReadUsers = userPerms.permissions?.read ?? false;
+        canCreateUsers = userPerms.permissions?.create ?? false;
+        canUpdateMemberships = membershipPerms.permissions?.update ?? false;
+        canDeleteMemberships = membershipPerms.permissions?.delete ?? false;
+      } catch {
+        // ignore permission lookup failures
+      }
     }
 
     if (!membershipsError) {
@@ -248,6 +390,15 @@ export default async function AdminUsersPage({ searchParams }: PageProps) {
     );
   }
 
+  if (!canReadUsers) {
+    return (
+      <div className="admin-page">
+        <h1>使用者管理</h1>
+        <p className="admin-error">目前角色沒有檢視權限。</p>
+      </div>
+    );
+  }
+
   return (
     <div className="admin-page">
       <h1>使用者管理</h1>
@@ -258,25 +409,25 @@ export default async function AdminUsersPage({ searchParams }: PageProps) {
         </p>
       )}
 
-      {ok && <p className="admin-success">已建立使用者。</p>}
+      {okMsg && <p className="admin-success">{okMsg}</p>}
       {error && <p className="admin-error">{decodeURIComponent(error)}</p>}
 
-      {user && !missingKey && (
-        <form action={createUserAction} className="admin-form-grid">
+      {user && !missingKey && canCreateUsers && (
+        <form action={createUserAction} className="admin-form-grid" autoComplete="off">
           <div className="admin-field">
             <label htmlFor="email">電子郵件</label>
-            <input id="email" name="email" type="email" required />
+            <input id="email" name="email" type="email" required autoComplete="off" />
           </div>
           <div className="admin-field">
             <label htmlFor="password">密碼</label>
-            <input id="password" name="password" type="password" required />
+            <input id="password" name="password" type="password" required autoComplete="new-password" />
           </div>
           <div className="admin-field">
             <label htmlFor="display_name">顯示名稱</label>
-            <input id="display_name" name="display_name" required />
+            <input id="display_name" name="display_name" required autoComplete="off" />
           </div>
           <div className="admin-field">
-            <label htmlFor="org_id">組織（選填）</label>
+            <label htmlFor="org_id">公司（選填）</label>
             <select id="org_id" name="org_id" defaultValue={orgId ?? ""}>
               <option value="">略過</option>
               {orgOptions.map((org) => (
@@ -287,7 +438,7 @@ export default async function AdminUsersPage({ searchParams }: PageProps) {
             </select>
           </div>
           <div className="admin-field">
-            <label htmlFor="unit_id">單位（選填）</label>
+            <label htmlFor="unit_id">部門（選填）</label>
             <select id="unit_id" name="unit_id" defaultValue="">
               <option value="">略過</option>
               {unitOptions.map((unit) => (
@@ -312,9 +463,11 @@ export default async function AdminUsersPage({ searchParams }: PageProps) {
             <label htmlFor="role">角色（選填）</label>
             <select id="role" name="role" defaultValue="">
               <option value="">略過</option>
-              <option value="manager">manager</option>
-              <option value="member">member</option>
-              <option value="viewer">viewer</option>
+              {roleOptions.map((role) => (
+                <option key={role} value={role}>
+                  {role}
+                </option>
+              ))}
             </select>
           </div>
           <button type="submit">建立使用者</button>
@@ -326,7 +479,7 @@ export default async function AdminUsersPage({ searchParams }: PageProps) {
           <h2>使用者權限</h2>
 
           {!orgId && !membershipsError && (
-            <p>尚未綁定組織，請先建立成員關係。</p>
+            <p>尚未綁定公司，請先建立成員關係。</p>
           )}
           {membershipsError && <p className="admin-error">{membershipsError}</p>}
           {!membershipsError && memberships.length === 0 && <p>目前沒有成員資料。</p>}
@@ -336,7 +489,8 @@ export default async function AdminUsersPage({ searchParams }: PageProps) {
               <thead>
                 <tr>
                   <th>使用者</th>
-                  <th>單位</th>
+                  <th>電子郵件</th>
+                  <th>部門</th>
                   <th>角色</th>
                   <th>建立時間</th>
                 </tr>
@@ -344,10 +498,60 @@ export default async function AdminUsersPage({ searchParams }: PageProps) {
               <tbody>
                 {memberships.map((m) => (
                   <tr key={`${m.user_id}:${m.unit_id}`}>
-                    <td>{userNameById[m.user_id] ?? "未知使用者"}</td>
-                    <td>{unitNameById[m.unit_id] ?? "-"}</td>
-                    <td>{m.role}</td>
-                    <td>{new Date(m.created_at).toLocaleString()}</td>
+                    <td>
+                      <input
+                        name="display_name"
+                        defaultValue={userNameById[m.user_id] ?? "未知使用者"}
+                        className="admin-inline-input"
+                        form={`mem-${m.user_id}-${m.unit_id}`}
+                        disabled={!canUpdateMemberships}
+                      />
+                    </td>
+                    <td>{userEmailById[m.user_id] ?? "-"}</td>
+                    <td>
+                      <select
+                        name="unit_id"
+                        defaultValue={m.unit_id}
+                        className="admin-inline-select"
+                        form={`mem-${m.user_id}-${m.unit_id}`}
+                        disabled={!canUpdateMemberships}
+                      >
+                        {unitOptions.map((unit) => (
+                          <option key={unit.id} value={unit.id}>
+                            {unit.name}
+                          </option>
+                        ))}
+                      </select>
+                    </td>
+                    <td>
+                      <select
+                        name="role"
+                        defaultValue={m.role}
+                        className="admin-inline-select"
+                        form={`mem-${m.user_id}-${m.unit_id}`}
+                        disabled={!canUpdateMemberships}
+                      >
+                        {roleOptions.map((role) => (
+                          <option key={role} value={role}>
+                            {role}
+                          </option>
+                        ))}
+                      </select>
+                    </td>
+                    <td>
+                      <div className="admin-inline-meta">{new Date(m.created_at).toLocaleString()}</div>
+                      <ConfirmForm
+                        id={`mem-${m.user_id}-${m.unit_id}`}
+                        action={updateMembershipRoleAction}
+                        confirmMessage="確定要更新成員資訊？"
+                        className="admin-inline-actions"
+                      >
+                        <input type="hidden" name="org_id" value={m.org_id} />
+                        <input type="hidden" name="current_unit_id" value={m.unit_id} />
+                        <input type="hidden" name="user_id" value={m.user_id} />
+                        <button type="submit" disabled={!canUpdateMemberships}>修改</button>
+                      </ConfirmForm>
+                    </td>
                   </tr>
                 ))}
               </tbody>

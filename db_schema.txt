@@ -1,10 +1,11 @@
-﻿--
+--
 -- PostgreSQL database dump
 --
 
+\restrict D7HvhihTKNkVIl5FX8y5Pc4NR6xlUTAsDchc86VSLbMU9pyf7Lo2hcRk0bkCtWT
 
 -- Dumped from database version 17.6
--- Dumped by pg_dump version 18.1
+-- Dumped by pg_dump version 17.7 (Ubuntu 17.7-3.pgdg24.04+1)
 
 SET statement_timeout = 0;
 SET lock_timeout = 0;
@@ -19,23 +20,21 @@ SET client_min_messages = warning;
 SET row_security = off;
 
 --
--- Name: public; Type: SCHEMA; Schema: -; Owner: pg_database_owner
+-- Name: public; Type: SCHEMA; Schema: -; Owner: -
 --
 
 CREATE SCHEMA public;
 
 
-ALTER SCHEMA public OWNER TO pg_database_owner;
-
 --
--- Name: SCHEMA public; Type: COMMENT; Schema: -; Owner: pg_database_owner
+-- Name: SCHEMA public; Type: COMMENT; Schema: -; Owner: -
 --
 
 COMMENT ON SCHEMA public IS 'standard public schema';
 
 
 --
--- Name: role_type; Type: TYPE; Schema: public; Owner: postgres
+-- Name: role_type; Type: TYPE; Schema: public; Owner: -
 --
 
 CREATE TYPE public.role_type AS ENUM (
@@ -46,89 +45,64 @@ CREATE TYPE public.role_type AS ENUM (
 );
 
 
-ALTER TYPE public.role_type OWNER TO postgres;
-
 --
--- Name: debug_auth(); Type: FUNCTION; Schema: public; Owner: postgres
+-- Name: debug_auth(); Type: FUNCTION; Schema: public; Owner: -
 --
 
 CREATE FUNCTION public.debug_auth() RETURNS jsonb
     LANGUAGE sql STABLE
     AS $$
-
   select jsonb_build_object(
-
     'auth_uid', auth.uid(),
-
     'auth_role', auth.role(),
-
     'current_user', current_user
-
   );
-
 $$;
 
 
-ALTER FUNCTION public.debug_auth() OWNER TO postgres;
-
 --
--- Name: is_org_member(uuid); Type: FUNCTION; Schema: public; Owner: postgres
+-- Name: is_org_member(uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
 CREATE FUNCTION public.is_org_member(p_org uuid) RETURNS boolean
-    LANGUAGE sql STABLE
+    LANGUAGE sql STABLE SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    SET row_security TO 'off'
     AS $$
-
   select exists (
-
     select 1
-
     from public.memberships m
-
     where m.org_id = p_org
-
       and m.user_id = auth.uid()
-
   );
-
 $$;
 
 
-ALTER FUNCTION public.is_org_member(p_org uuid) OWNER TO postgres;
-
 --
--- Name: is_unit_member(uuid, uuid); Type: FUNCTION; Schema: public; Owner: postgres
+-- Name: is_unit_member(uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
 CREATE FUNCTION public.is_unit_member(p_org uuid, p_unit uuid) RETURNS boolean
-    LANGUAGE sql STABLE
+    LANGUAGE sql STABLE SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    SET row_security TO 'off'
     AS $$
-
   select exists (
-
     select 1
-
     from public.memberships m
-
     where m.org_id = p_org
-
       and m.unit_id = p_unit
-
       and m.user_id = auth.uid()
-
   );
-
 $$;
 
-
-ALTER FUNCTION public.is_unit_member(p_org uuid, p_unit uuid) OWNER TO postgres;
 
 SET default_tablespace = '';
 
 SET default_table_access_method = heap;
 
 --
--- Name: drive_items; Type: TABLE; Schema: public; Owner: postgres
+-- Name: drive_items; Type: TABLE; Schema: public; Owner: -
 --
 
 CREATE TABLE public.drive_items (
@@ -142,14 +116,15 @@ CREATE TABLE public.drive_items (
     name text NOT NULL,
     mime_type text,
     modified_time timestamp with time zone,
-    created_at timestamp with time zone DEFAULT now() NOT NULL
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    thumbnail_link text,
+    file_size_bytes bigint,
+    original_size_bytes bigint
 );
 
 
-ALTER TABLE public.drive_items OWNER TO postgres;
-
 --
--- Name: memberships; Type: TABLE; Schema: public; Owner: postgres
+-- Name: memberships; Type: TABLE; Schema: public; Owner: -
 --
 
 CREATE TABLE public.memberships (
@@ -161,10 +136,8 @@ CREATE TABLE public.memberships (
 );
 
 
-ALTER TABLE public.memberships OWNER TO postgres;
-
 --
--- Name: orgs; Type: TABLE; Schema: public; Owner: postgres
+-- Name: orgs; Type: TABLE; Schema: public; Owner: -
 --
 
 CREATE TABLE public.orgs (
@@ -174,10 +147,8 @@ CREATE TABLE public.orgs (
 );
 
 
-ALTER TABLE public.orgs OWNER TO postgres;
-
 --
--- Name: profiles; Type: TABLE; Schema: public; Owner: postgres
+-- Name: profiles; Type: TABLE; Schema: public; Owner: -
 --
 
 CREATE TABLE public.profiles (
@@ -187,10 +158,8 @@ CREATE TABLE public.profiles (
 );
 
 
-ALTER TABLE public.profiles OWNER TO postgres;
-
 --
--- Name: progress_logs; Type: TABLE; Schema: public; Owner: postgres
+-- Name: progress_logs; Type: TABLE; Schema: public; Owner: -
 --
 
 CREATE TABLE public.progress_logs (
@@ -206,10 +175,28 @@ CREATE TABLE public.progress_logs (
 );
 
 
-ALTER TABLE public.progress_logs OWNER TO postgres;
+--
 
 --
--- Name: project_tasks; Type: TABLE; Schema: public; Owner: postgres
+-- Name: assist_requests; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.assist_requests (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    org_id uuid NOT NULL,
+    unit_id uuid NOT NULL,
+    project_id uuid NOT NULL,
+    project_task_id uuid,
+    to_unit_id uuid,
+    requested_by uuid,
+    status text DEFAULT 'open'::text NOT NULL,
+    due_date date,
+    note text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+-- Name: project_tasks; Type: TABLE; Schema: public; Owner: -
 --
 
 CREATE TABLE public.project_tasks (
@@ -230,10 +217,8 @@ CREATE TABLE public.project_tasks (
 );
 
 
-ALTER TABLE public.project_tasks OWNER TO postgres;
-
 --
--- Name: projects; Type: TABLE; Schema: public; Owner: postgres
+-- Name: projects; Type: TABLE; Schema: public; Owner: -
 --
 
 CREATE TABLE public.projects (
@@ -249,10 +234,23 @@ CREATE TABLE public.projects (
 );
 
 
-ALTER TABLE public.projects OWNER TO postgres;
+--
+-- Name: role_permissions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.role_permissions (
+    role public.role_type NOT NULL,
+    resource text NOT NULL,
+    can_read boolean DEFAULT false NOT NULL,
+    can_create boolean DEFAULT false NOT NULL,
+    can_update boolean DEFAULT false NOT NULL,
+    can_delete boolean DEFAULT false NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
 
 --
--- Name: template_phases; Type: TABLE; Schema: public; Owner: postgres
+-- Name: template_phases; Type: TABLE; Schema: public; Owner: -
 --
 
 CREATE TABLE public.template_phases (
@@ -264,10 +262,8 @@ CREATE TABLE public.template_phases (
 );
 
 
-ALTER TABLE public.template_phases OWNER TO postgres;
-
 --
--- Name: template_tasks; Type: TABLE; Schema: public; Owner: postgres
+-- Name: template_tasks; Type: TABLE; Schema: public; Owner: -
 --
 
 CREATE TABLE public.template_tasks (
@@ -281,10 +277,8 @@ CREATE TABLE public.template_tasks (
 );
 
 
-ALTER TABLE public.template_tasks OWNER TO postgres;
-
 --
--- Name: templates; Type: TABLE; Schema: public; Owner: postgres
+-- Name: templates; Type: TABLE; Schema: public; Owner: -
 --
 
 CREATE TABLE public.templates (
@@ -296,10 +290,8 @@ CREATE TABLE public.templates (
 );
 
 
-ALTER TABLE public.templates OWNER TO postgres;
-
 --
--- Name: units; Type: TABLE; Schema: public; Owner: postgres
+-- Name: units; Type: TABLE; Schema: public; Owner: -
 --
 
 CREATE TABLE public.units (
@@ -310,10 +302,16 @@ CREATE TABLE public.units (
 );
 
 
-ALTER TABLE public.units OWNER TO postgres;
+--
 
 --
--- Name: drive_items drive_items_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+-- Name: assist_requests assist_requests_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.assist_requests
+    ADD CONSTRAINT assist_requests_pkey PRIMARY KEY (id);
+
+-- Name: drive_items drive_items_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.drive_items
@@ -321,7 +319,7 @@ ALTER TABLE ONLY public.drive_items
 
 
 --
--- Name: memberships memberships_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+-- Name: memberships memberships_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.memberships
@@ -329,7 +327,7 @@ ALTER TABLE ONLY public.memberships
 
 
 --
--- Name: orgs orgs_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+-- Name: orgs orgs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.orgs
@@ -337,7 +335,7 @@ ALTER TABLE ONLY public.orgs
 
 
 --
--- Name: profiles profiles_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+-- Name: profiles profiles_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.profiles
@@ -345,7 +343,7 @@ ALTER TABLE ONLY public.profiles
 
 
 --
--- Name: progress_logs progress_logs_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+-- Name: progress_logs progress_logs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.progress_logs
@@ -353,7 +351,7 @@ ALTER TABLE ONLY public.progress_logs
 
 
 --
--- Name: project_tasks project_tasks_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+-- Name: project_tasks project_tasks_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.project_tasks
@@ -361,7 +359,7 @@ ALTER TABLE ONLY public.project_tasks
 
 
 --
--- Name: project_tasks project_tasks_project_id_seq_key; Type: CONSTRAINT; Schema: public; Owner: postgres
+-- Name: project_tasks project_tasks_project_id_seq_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.project_tasks
@@ -369,7 +367,7 @@ ALTER TABLE ONLY public.project_tasks
 
 
 --
--- Name: projects projects_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+-- Name: projects projects_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.projects
@@ -377,7 +375,15 @@ ALTER TABLE ONLY public.projects
 
 
 --
--- Name: template_phases template_phases_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+-- Name: role_permissions role_permissions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.role_permissions
+    ADD CONSTRAINT role_permissions_pkey PRIMARY KEY (role, resource);
+
+
+--
+-- Name: template_phases template_phases_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.template_phases
@@ -385,7 +391,7 @@ ALTER TABLE ONLY public.template_phases
 
 
 --
--- Name: template_phases template_phases_template_id_seq_key; Type: CONSTRAINT; Schema: public; Owner: postgres
+-- Name: template_phases template_phases_template_id_seq_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.template_phases
@@ -393,7 +399,7 @@ ALTER TABLE ONLY public.template_phases
 
 
 --
--- Name: template_tasks template_tasks_phase_id_seq_key; Type: CONSTRAINT; Schema: public; Owner: postgres
+-- Name: template_tasks template_tasks_phase_id_seq_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.template_tasks
@@ -401,7 +407,7 @@ ALTER TABLE ONLY public.template_tasks
 
 
 --
--- Name: template_tasks template_tasks_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+-- Name: template_tasks template_tasks_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.template_tasks
@@ -409,7 +415,7 @@ ALTER TABLE ONLY public.template_tasks
 
 
 --
--- Name: templates templates_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+-- Name: templates templates_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.templates
@@ -417,7 +423,7 @@ ALTER TABLE ONLY public.templates
 
 
 --
--- Name: units units_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+-- Name: units units_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.units
@@ -425,42 +431,122 @@ ALTER TABLE ONLY public.units
 
 
 --
--- Name: idx_drive_items_org_unit; Type: INDEX; Schema: public; Owner: postgres
+
+--
+-- Name: idx_assist_requests_due; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_assist_requests_due ON public.assist_requests USING btree (due_date);
+
+--
+-- Name: idx_assist_requests_org_unit; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_assist_requests_org_unit ON public.assist_requests USING btree (org_id, unit_id);
+
+--
+-- Name: idx_assist_requests_project; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_assist_requests_project ON public.assist_requests USING btree (project_id);
+
+--
+-- Name: idx_assist_requests_status; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_assist_requests_status ON public.assist_requests USING btree (status);
+
+--
+-- Name: idx_assist_requests_task; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_assist_requests_task ON public.assist_requests USING btree (project_task_id);
+
+--
+-- Name: idx_assist_requests_to_unit; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_assist_requests_to_unit ON public.assist_requests USING btree (to_unit_id);
+
+-- Name: idx_drive_items_org_unit; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX idx_drive_items_org_unit ON public.drive_items USING btree (org_id, unit_id);
 
 
 --
--- Name: idx_progress_logs_org_unit; Type: INDEX; Schema: public; Owner: postgres
+-- Name: idx_progress_logs_org_unit; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX idx_progress_logs_org_unit ON public.progress_logs USING btree (org_id, unit_id);
 
 
 --
--- Name: idx_project_tasks_org_unit; Type: INDEX; Schema: public; Owner: postgres
+-- Name: idx_project_tasks_org_unit; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX idx_project_tasks_org_unit ON public.project_tasks USING btree (org_id, unit_id);
 
 
 --
--- Name: idx_project_tasks_project_id; Type: INDEX; Schema: public; Owner: postgres
+-- Name: idx_project_tasks_project_id; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX idx_project_tasks_project_id ON public.project_tasks USING btree (project_id);
 
 
 --
--- Name: idx_projects_org_unit; Type: INDEX; Schema: public; Owner: postgres
+-- Name: idx_projects_org_unit; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX idx_projects_org_unit ON public.projects USING btree (org_id, unit_id);
 
 
 --
--- Name: drive_items drive_items_org_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+
+--
+-- Name: assist_requests assist_requests_org_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.assist_requests
+    ADD CONSTRAINT assist_requests_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.orgs(id) ON DELETE CASCADE;
+
+--
+-- Name: assist_requests assist_requests_project_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.assist_requests
+    ADD CONSTRAINT assist_requests_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id) ON DELETE CASCADE;
+
+--
+-- Name: assist_requests assist_requests_project_task_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.assist_requests
+    ADD CONSTRAINT assist_requests_project_task_id_fkey FOREIGN KEY (project_task_id) REFERENCES public.project_tasks(id) ON DELETE CASCADE;
+
+--
+-- Name: assist_requests assist_requests_requested_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.assist_requests
+    ADD CONSTRAINT assist_requests_requested_by_fkey FOREIGN KEY (requested_by) REFERENCES public.profiles(user_id) ON DELETE SET NULL;
+
+--
+-- Name: assist_requests assist_requests_to_unit_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.assist_requests
+    ADD CONSTRAINT assist_requests_to_unit_id_fkey FOREIGN KEY (to_unit_id) REFERENCES public.units(id) ON DELETE SET NULL;
+
+--
+-- Name: assist_requests assist_requests_unit_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.assist_requests
+    ADD CONSTRAINT assist_requests_unit_id_fkey FOREIGN KEY (unit_id) REFERENCES public.units(id) ON DELETE CASCADE;
+
+-- Name: drive_items drive_items_org_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.drive_items
@@ -468,7 +554,7 @@ ALTER TABLE ONLY public.drive_items
 
 
 --
--- Name: drive_items drive_items_project_task_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+-- Name: drive_items drive_items_project_task_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.drive_items
@@ -476,7 +562,7 @@ ALTER TABLE ONLY public.drive_items
 
 
 --
--- Name: drive_items drive_items_unit_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+-- Name: drive_items drive_items_unit_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.drive_items
@@ -484,7 +570,7 @@ ALTER TABLE ONLY public.drive_items
 
 
 --
--- Name: drive_items drive_items_uploaded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+-- Name: drive_items drive_items_uploaded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.drive_items
@@ -492,7 +578,7 @@ ALTER TABLE ONLY public.drive_items
 
 
 --
--- Name: memberships memberships_org_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+-- Name: memberships memberships_org_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.memberships
@@ -500,7 +586,7 @@ ALTER TABLE ONLY public.memberships
 
 
 --
--- Name: memberships memberships_unit_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+-- Name: memberships memberships_unit_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.memberships
@@ -508,7 +594,7 @@ ALTER TABLE ONLY public.memberships
 
 
 --
--- Name: memberships memberships_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+-- Name: memberships memberships_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.memberships
@@ -516,7 +602,7 @@ ALTER TABLE ONLY public.memberships
 
 
 --
--- Name: profiles profiles_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+-- Name: profiles profiles_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.profiles
@@ -524,7 +610,7 @@ ALTER TABLE ONLY public.profiles
 
 
 --
--- Name: progress_logs progress_logs_org_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+-- Name: progress_logs progress_logs_org_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.progress_logs
@@ -532,7 +618,7 @@ ALTER TABLE ONLY public.progress_logs
 
 
 --
--- Name: progress_logs progress_logs_project_task_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+-- Name: progress_logs progress_logs_project_task_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.progress_logs
@@ -540,7 +626,7 @@ ALTER TABLE ONLY public.progress_logs
 
 
 --
--- Name: progress_logs progress_logs_unit_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+-- Name: progress_logs progress_logs_unit_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.progress_logs
@@ -548,7 +634,7 @@ ALTER TABLE ONLY public.progress_logs
 
 
 --
--- Name: progress_logs progress_logs_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+-- Name: progress_logs progress_logs_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.progress_logs
@@ -556,7 +642,7 @@ ALTER TABLE ONLY public.progress_logs
 
 
 --
--- Name: project_tasks project_tasks_org_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+-- Name: project_tasks project_tasks_org_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.project_tasks
@@ -564,7 +650,7 @@ ALTER TABLE ONLY public.project_tasks
 
 
 --
--- Name: project_tasks project_tasks_owner_unit_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+-- Name: project_tasks project_tasks_owner_unit_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.project_tasks
@@ -572,7 +658,7 @@ ALTER TABLE ONLY public.project_tasks
 
 
 --
--- Name: project_tasks project_tasks_project_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+-- Name: project_tasks project_tasks_project_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.project_tasks
@@ -580,7 +666,7 @@ ALTER TABLE ONLY public.project_tasks
 
 
 --
--- Name: project_tasks project_tasks_unit_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+-- Name: project_tasks project_tasks_unit_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.project_tasks
@@ -588,7 +674,7 @@ ALTER TABLE ONLY public.project_tasks
 
 
 --
--- Name: projects projects_created_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+-- Name: projects projects_created_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.projects
@@ -596,7 +682,7 @@ ALTER TABLE ONLY public.projects
 
 
 --
--- Name: projects projects_org_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+-- Name: projects projects_org_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.projects
@@ -604,7 +690,7 @@ ALTER TABLE ONLY public.projects
 
 
 --
--- Name: projects projects_template_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+-- Name: projects projects_template_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.projects
@@ -612,7 +698,7 @@ ALTER TABLE ONLY public.projects
 
 
 --
--- Name: projects projects_unit_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+-- Name: projects projects_unit_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.projects
@@ -620,7 +706,7 @@ ALTER TABLE ONLY public.projects
 
 
 --
--- Name: template_phases template_phases_template_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+-- Name: template_phases template_phases_template_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.template_phases
@@ -628,7 +714,7 @@ ALTER TABLE ONLY public.template_phases
 
 
 --
--- Name: template_tasks template_tasks_default_owner_unit_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+-- Name: template_tasks template_tasks_default_owner_unit_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.template_tasks
@@ -636,7 +722,7 @@ ALTER TABLE ONLY public.template_tasks
 
 
 --
--- Name: template_tasks template_tasks_phase_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+-- Name: template_tasks template_tasks_phase_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.template_tasks
@@ -644,7 +730,7 @@ ALTER TABLE ONLY public.template_tasks
 
 
 --
--- Name: templates templates_created_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+-- Name: templates templates_created_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.templates
@@ -652,7 +738,7 @@ ALTER TABLE ONLY public.templates
 
 
 --
--- Name: templates templates_org_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+-- Name: templates templates_org_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.templates
@@ -660,7 +746,7 @@ ALTER TABLE ONLY public.templates
 
 
 --
--- Name: units units_org_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+-- Name: units units_org_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.units
@@ -668,13 +754,44 @@ ALTER TABLE ONLY public.units
 
 
 --
--- Name: drive_items; Type: ROW SECURITY; Schema: public; Owner: postgres
+
+--
+-- Name: assist_requests; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.assist_requests ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: assist_requests assist_requests_select_org; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY assist_requests_select_org ON public.assist_requests FOR SELECT USING (public.is_org_member(org_id));
+
+--
+-- Name: assist_requests assist_requests_insert_requester; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY assist_requests_insert_requester ON public.assist_requests FOR INSERT WITH CHECK (public.is_unit_member(org_id, unit_id));
+
+--
+-- Name: assist_requests assist_requests_update_parties; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY assist_requests_update_parties ON public.assist_requests FOR UPDATE USING ((public.is_unit_member(org_id, unit_id) OR public.is_unit_member(org_id, to_unit_id))) WITH CHECK ((public.is_unit_member(org_id, unit_id) OR public.is_unit_member(org_id, to_unit_id)));
+
+--
+-- Name: assist_requests assist_requests_delete_requester; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY assist_requests_delete_requester ON public.assist_requests FOR DELETE USING (public.is_unit_member(org_id, unit_id));
+
+-- Name: drive_items; Type: ROW SECURITY; Schema: public; Owner: -
 --
 
 ALTER TABLE public.drive_items ENABLE ROW LEVEL SECURITY;
 
 --
--- Name: drive_items drive_items_select_same_unit; Type: POLICY; Schema: public; Owner: postgres
+-- Name: drive_items drive_items_select_same_unit; Type: POLICY; Schema: public; Owner: -
 --
 
 CREATE POLICY drive_items_select_same_unit ON public.drive_items FOR SELECT USING ((EXISTS ( SELECT 1
@@ -683,107 +800,86 @@ CREATE POLICY drive_items_select_same_unit ON public.drive_items FOR SELECT USIN
 
 
 --
--- Name: memberships; Type: ROW SECURITY; Schema: public; Owner: postgres
+-- Name: memberships; Type: ROW SECURITY; Schema: public; Owner: -
 --
 
 ALTER TABLE public.memberships ENABLE ROW LEVEL SECURITY;
 
 --
--- Name: memberships memberships_select_member; Type: POLICY; Schema: public; Owner: postgres
+-- Name: memberships memberships_select_member; Type: POLICY; Schema: public; Owner: -
 --
 
 CREATE POLICY memberships_select_member ON public.memberships FOR SELECT USING (((user_id = auth.uid()) OR public.is_org_member(org_id)));
 
 
 --
--- Name: memberships memberships_select_own; Type: POLICY; Schema: public; Owner: postgres
+-- Name: memberships memberships_select_own; Type: POLICY; Schema: public; Owner: -
 --
 
 CREATE POLICY memberships_select_own ON public.memberships FOR SELECT TO authenticated USING ((user_id = auth.uid()));
 
 
 --
--- Name: orgs; Type: ROW SECURITY; Schema: public; Owner: postgres
+-- Name: orgs; Type: ROW SECURITY; Schema: public; Owner: -
 --
 
 ALTER TABLE public.orgs ENABLE ROW LEVEL SECURITY;
 
 --
--- Name: orgs orgs_select_member; Type: POLICY; Schema: public; Owner: postgres
+-- Name: orgs orgs_select_member; Type: POLICY; Schema: public; Owner: -
 --
 
 CREATE POLICY orgs_select_member ON public.orgs FOR SELECT USING (public.is_org_member(id));
 
 
 --
--- Name: profiles; Type: ROW SECURITY; Schema: public; Owner: postgres
+-- Name: profiles; Type: ROW SECURITY; Schema: public; Owner: -
 --
 
 ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
 
 --
--- Name: profiles profiles_select_own; Type: POLICY; Schema: public; Owner: postgres
+-- Name: profiles profiles_select_own; Type: POLICY; Schema: public; Owner: -
 --
 
 CREATE POLICY profiles_select_own ON public.profiles FOR SELECT USING ((user_id = auth.uid()));
 
 
 --
--- Name: progress_logs; Type: ROW SECURITY; Schema: public; Owner: postgres
+-- Name: progress_logs; Type: ROW SECURITY; Schema: public; Owner: -
 --
 
 ALTER TABLE public.progress_logs ENABLE ROW LEVEL SECURITY;
 
 --
--- Name: progress_logs progress_logs_insert_org_member; Type: POLICY; Schema: public; Owner: postgres
---
-
-CREATE POLICY progress_logs_insert_org_member ON public.progress_logs FOR INSERT TO authenticated WITH CHECK (((user_id = auth.uid()) AND (EXISTS ( SELECT 1
-   FROM public.memberships m
-  WHERE ((m.user_id = auth.uid()) AND (m.org_id = progress_logs.org_id)))) AND (EXISTS ( SELECT 1
-   FROM (public.project_tasks t
-     JOIN public.projects p ON ((p.id = t.project_id)))
-  WHERE ((t.id = progress_logs.project_task_id) AND (p.org_id = progress_logs.org_id))))));
-
-
---
--- Name: progress_logs progress_logs_select_org; Type: POLICY; Schema: public; Owner: postgres
+-- Name: progress_logs progress_logs_select_org; Type: POLICY; Schema: public; Owner: -
 --
 
 CREATE POLICY progress_logs_select_org ON public.progress_logs FOR SELECT USING (public.is_org_member(org_id));
 
 
 --
--- Name: progress_logs progress_logs_select_org_member; Type: POLICY; Schema: public; Owner: postgres
---
-
-CREATE POLICY progress_logs_select_org_member ON public.progress_logs FOR SELECT TO authenticated USING ((EXISTS ( SELECT 1
-   FROM public.memberships m
-  WHERE ((m.user_id = auth.uid()) AND (m.org_id = progress_logs.org_id)))));
-
-
---
--- Name: progress_logs progress_logs_write_unit; Type: POLICY; Schema: public; Owner: postgres
+-- Name: progress_logs progress_logs_write_unit; Type: POLICY; Schema: public; Owner: -
 --
 
 CREATE POLICY progress_logs_write_unit ON public.progress_logs USING (public.is_unit_member(org_id, unit_id)) WITH CHECK (public.is_unit_member(org_id, unit_id));
 
 
 --
--- Name: project_tasks; Type: ROW SECURITY; Schema: public; Owner: postgres
+-- Name: project_tasks; Type: ROW SECURITY; Schema: public; Owner: -
 --
 
 ALTER TABLE public.project_tasks ENABLE ROW LEVEL SECURITY;
 
 --
--- Name: project_tasks project_tasks_select_org; Type: POLICY; Schema: public; Owner: postgres
+-- Name: project_tasks project_tasks_select_org; Type: POLICY; Schema: public; Owner: -
 --
 
 CREATE POLICY project_tasks_select_org ON public.project_tasks FOR SELECT USING (public.is_org_member(org_id));
 
 
 --
--- Name: project_tasks project_tasks_select_org_member; Type: POLICY; Schema: public; Owner: postgres
+-- Name: project_tasks project_tasks_select_org_member; Type: POLICY; Schema: public; Owner: -
 --
 
 CREATE POLICY project_tasks_select_org_member ON public.project_tasks FOR SELECT TO authenticated USING ((EXISTS ( SELECT 1
@@ -793,7 +889,7 @@ CREATE POLICY project_tasks_select_org_member ON public.project_tasks FOR SELECT
 
 
 --
--- Name: project_tasks project_tasks_update_org_member; Type: POLICY; Schema: public; Owner: postgres
+-- Name: project_tasks project_tasks_update_org_member; Type: POLICY; Schema: public; Owner: -
 --
 
 CREATE POLICY project_tasks_update_org_member ON public.project_tasks FOR UPDATE TO authenticated USING ((EXISTS ( SELECT 1
@@ -806,7 +902,7 @@ CREATE POLICY project_tasks_update_org_member ON public.project_tasks FOR UPDATE
 
 
 --
--- Name: project_tasks project_tasks_update_owner_unit; Type: POLICY; Schema: public; Owner: postgres
+-- Name: project_tasks project_tasks_update_owner_unit; Type: POLICY; Schema: public; Owner: -
 --
 
 CREATE POLICY project_tasks_update_owner_unit ON public.project_tasks FOR UPDATE USING ((EXISTS ( SELECT 1
@@ -816,268 +912,73 @@ CREATE POLICY project_tasks_update_owner_unit ON public.project_tasks FOR UPDATE
 
 
 --
--- Name: project_tasks project_tasks_write_unit; Type: POLICY; Schema: public; Owner: postgres
+-- Name: project_tasks project_tasks_write_unit; Type: POLICY; Schema: public; Owner: -
 --
 
 CREATE POLICY project_tasks_write_unit ON public.project_tasks USING (public.is_unit_member(org_id, unit_id)) WITH CHECK (public.is_unit_member(org_id, unit_id));
 
 
 --
--- Name: projects; Type: ROW SECURITY; Schema: public; Owner: postgres
+-- Name: projects; Type: ROW SECURITY; Schema: public; Owner: -
 --
 
 ALTER TABLE public.projects ENABLE ROW LEVEL SECURITY;
 
 --
--- Name: projects projects_select_org; Type: POLICY; Schema: public; Owner: postgres
+-- Name: projects projects_select_org; Type: POLICY; Schema: public; Owner: -
 --
 
 CREATE POLICY projects_select_org ON public.projects FOR SELECT USING (public.is_org_member(org_id));
 
 
 --
--- Name: projects projects_write_unit; Type: POLICY; Schema: public; Owner: postgres
+-- Name: projects projects_write_unit; Type: POLICY; Schema: public; Owner: -
 --
 
 CREATE POLICY projects_write_unit ON public.projects USING (public.is_unit_member(org_id, unit_id)) WITH CHECK (public.is_unit_member(org_id, unit_id));
 
 
 --
--- Name: template_phases; Type: ROW SECURITY; Schema: public; Owner: postgres
+-- Name: template_phases; Type: ROW SECURITY; Schema: public; Owner: -
 --
 
 ALTER TABLE public.template_phases ENABLE ROW LEVEL SECURITY;
 
 --
--- Name: template_tasks; Type: ROW SECURITY; Schema: public; Owner: postgres
+-- Name: template_tasks; Type: ROW SECURITY; Schema: public; Owner: -
 --
 
 ALTER TABLE public.template_tasks ENABLE ROW LEVEL SECURITY;
 
 --
--- Name: templates; Type: ROW SECURITY; Schema: public; Owner: postgres
+-- Name: templates; Type: ROW SECURITY; Schema: public; Owner: -
 --
 
 ALTER TABLE public.templates ENABLE ROW LEVEL SECURITY;
 
 --
--- Name: templates templates_select_org; Type: POLICY; Schema: public; Owner: postgres
+-- Name: templates templates_select_org; Type: POLICY; Schema: public; Owner: -
 --
 
 CREATE POLICY templates_select_org ON public.templates FOR SELECT USING (public.is_org_member(org_id));
 
 
 --
--- Name: units; Type: ROW SECURITY; Schema: public; Owner: postgres
+-- Name: units; Type: ROW SECURITY; Schema: public; Owner: -
 --
 
 ALTER TABLE public.units ENABLE ROW LEVEL SECURITY;
 
 --
--- Name: units units_select_member; Type: POLICY; Schema: public; Owner: postgres
+-- Name: units units_select_member; Type: POLICY; Schema: public; Owner: -
 --
 
 CREATE POLICY units_select_member ON public.units FOR SELECT USING (public.is_org_member(org_id));
 
 
 --
--- Name: SCHEMA public; Type: ACL; Schema: -; Owner: pg_database_owner
---
-
-GRANT USAGE ON SCHEMA public TO postgres;
-GRANT USAGE ON SCHEMA public TO anon;
-GRANT USAGE ON SCHEMA public TO authenticated;
-GRANT USAGE ON SCHEMA public TO service_role;
-
-
---
--- Name: FUNCTION debug_auth(); Type: ACL; Schema: public; Owner: postgres
---
-
-GRANT ALL ON FUNCTION public.debug_auth() TO anon;
-GRANT ALL ON FUNCTION public.debug_auth() TO authenticated;
-GRANT ALL ON FUNCTION public.debug_auth() TO service_role;
-
-
---
--- Name: FUNCTION is_org_member(p_org uuid); Type: ACL; Schema: public; Owner: postgres
---
-
-GRANT ALL ON FUNCTION public.is_org_member(p_org uuid) TO anon;
-GRANT ALL ON FUNCTION public.is_org_member(p_org uuid) TO authenticated;
-GRANT ALL ON FUNCTION public.is_org_member(p_org uuid) TO service_role;
-
-
---
--- Name: FUNCTION is_unit_member(p_org uuid, p_unit uuid); Type: ACL; Schema: public; Owner: postgres
---
-
-GRANT ALL ON FUNCTION public.is_unit_member(p_org uuid, p_unit uuid) TO anon;
-GRANT ALL ON FUNCTION public.is_unit_member(p_org uuid, p_unit uuid) TO authenticated;
-GRANT ALL ON FUNCTION public.is_unit_member(p_org uuid, p_unit uuid) TO service_role;
-
-
---
--- Name: TABLE drive_items; Type: ACL; Schema: public; Owner: postgres
---
-
-GRANT ALL ON TABLE public.drive_items TO anon;
-GRANT ALL ON TABLE public.drive_items TO authenticated;
-GRANT ALL ON TABLE public.drive_items TO service_role;
-
-
---
--- Name: TABLE memberships; Type: ACL; Schema: public; Owner: postgres
---
-
-GRANT ALL ON TABLE public.memberships TO anon;
-GRANT ALL ON TABLE public.memberships TO authenticated;
-GRANT ALL ON TABLE public.memberships TO service_role;
-
-
---
--- Name: TABLE orgs; Type: ACL; Schema: public; Owner: postgres
---
-
-GRANT ALL ON TABLE public.orgs TO anon;
-GRANT ALL ON TABLE public.orgs TO authenticated;
-GRANT ALL ON TABLE public.orgs TO service_role;
-
-
---
--- Name: TABLE profiles; Type: ACL; Schema: public; Owner: postgres
---
-
-GRANT ALL ON TABLE public.profiles TO anon;
-GRANT ALL ON TABLE public.profiles TO authenticated;
-GRANT ALL ON TABLE public.profiles TO service_role;
-
-
---
--- Name: TABLE progress_logs; Type: ACL; Schema: public; Owner: postgres
---
-
-GRANT ALL ON TABLE public.progress_logs TO anon;
-GRANT ALL ON TABLE public.progress_logs TO authenticated;
-GRANT ALL ON TABLE public.progress_logs TO service_role;
-
-
---
--- Name: TABLE project_tasks; Type: ACL; Schema: public; Owner: postgres
---
-
-GRANT ALL ON TABLE public.project_tasks TO anon;
-GRANT ALL ON TABLE public.project_tasks TO authenticated;
-GRANT ALL ON TABLE public.project_tasks TO service_role;
-
-
---
--- Name: TABLE projects; Type: ACL; Schema: public; Owner: postgres
---
-
-GRANT ALL ON TABLE public.projects TO anon;
-GRANT ALL ON TABLE public.projects TO authenticated;
-GRANT ALL ON TABLE public.projects TO service_role;
-
-
---
--- Name: TABLE template_phases; Type: ACL; Schema: public; Owner: postgres
---
-
-GRANT ALL ON TABLE public.template_phases TO anon;
-GRANT ALL ON TABLE public.template_phases TO authenticated;
-GRANT ALL ON TABLE public.template_phases TO service_role;
-
-
---
--- Name: TABLE template_tasks; Type: ACL; Schema: public; Owner: postgres
---
-
-GRANT ALL ON TABLE public.template_tasks TO anon;
-GRANT ALL ON TABLE public.template_tasks TO authenticated;
-GRANT ALL ON TABLE public.template_tasks TO service_role;
-
-
---
--- Name: TABLE templates; Type: ACL; Schema: public; Owner: postgres
---
-
-GRANT ALL ON TABLE public.templates TO anon;
-GRANT ALL ON TABLE public.templates TO authenticated;
-GRANT ALL ON TABLE public.templates TO service_role;
-
-
---
--- Name: TABLE units; Type: ACL; Schema: public; Owner: postgres
---
-
-GRANT ALL ON TABLE public.units TO anon;
-GRANT ALL ON TABLE public.units TO authenticated;
-GRANT ALL ON TABLE public.units TO service_role;
-
-
---
--- Name: DEFAULT PRIVILEGES FOR SEQUENCES; Type: DEFAULT ACL; Schema: public; Owner: postgres
---
-
-ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT ALL ON SEQUENCES TO postgres;
-ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT ALL ON SEQUENCES TO anon;
-ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT ALL ON SEQUENCES TO authenticated;
-ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT ALL ON SEQUENCES TO service_role;
-
-
---
--- Name: DEFAULT PRIVILEGES FOR SEQUENCES; Type: DEFAULT ACL; Schema: public; Owner: supabase_admin
---
-
-ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public GRANT ALL ON SEQUENCES TO postgres;
-ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public GRANT ALL ON SEQUENCES TO anon;
-ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public GRANT ALL ON SEQUENCES TO authenticated;
-ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public GRANT ALL ON SEQUENCES TO service_role;
-
-
---
--- Name: DEFAULT PRIVILEGES FOR FUNCTIONS; Type: DEFAULT ACL; Schema: public; Owner: postgres
---
-
-ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT ALL ON FUNCTIONS TO postgres;
-ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT ALL ON FUNCTIONS TO anon;
-ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT ALL ON FUNCTIONS TO authenticated;
-ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT ALL ON FUNCTIONS TO service_role;
-
-
---
--- Name: DEFAULT PRIVILEGES FOR FUNCTIONS; Type: DEFAULT ACL; Schema: public; Owner: supabase_admin
---
-
-ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public GRANT ALL ON FUNCTIONS TO postgres;
-ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public GRANT ALL ON FUNCTIONS TO anon;
-ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public GRANT ALL ON FUNCTIONS TO authenticated;
-ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public GRANT ALL ON FUNCTIONS TO service_role;
-
-
---
--- Name: DEFAULT PRIVILEGES FOR TABLES; Type: DEFAULT ACL; Schema: public; Owner: postgres
---
-
-ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT ALL ON TABLES TO postgres;
-ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT ALL ON TABLES TO anon;
-ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT ALL ON TABLES TO authenticated;
-ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT ALL ON TABLES TO service_role;
-
-
---
--- Name: DEFAULT PRIVILEGES FOR TABLES; Type: DEFAULT ACL; Schema: public; Owner: supabase_admin
---
-
-ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public GRANT ALL ON TABLES TO postgres;
-ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public GRANT ALL ON TABLES TO anon;
-ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public GRANT ALL ON TABLES TO authenticated;
-ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public GRANT ALL ON TABLES TO service_role;
-
-
---
 -- PostgreSQL database dump complete
 --
 
+\unrestrict D7HvhihTKNkVIl5FX8y5Pc4NR6xlUTAsDchc86VSLbMU9pyf7Lo2hcRk0bkCtWT
 

@@ -65,7 +65,7 @@ type Props = {
 };
 
 const tabs = [
-  { id: "dashboard", label: "Dashboard" },
+  { id: "dashboard", label: "儀表板" },
   { id: "board", label: "Board" },
   { id: "timeline", label: "Timeline" },
   { id: "files", label: "Files" },
@@ -606,6 +606,7 @@ export default function ProjectWorkspace({ project, tasks, role, driveItems }: P
   }
 
   function deleteFlag(taskId: string, flagId: string) {
+    if (!window.confirm("確定要刪除？")) return;
     setFlagsByTask((prev) => ({
       ...prev,
       [taskId]: (prev[taskId] ?? []).filter((flag) => flag.id !== flagId),
@@ -1382,6 +1383,9 @@ function FileUploadForm({
           missing_google_oauth:
             "尚未設定 Google Drive OAuth，請先設定 GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET / GOOGLE_REFRESH_TOKEN。",
           not_authenticated: "尚未登入，請先登入後再上傳。",
+          permission_denied: "沒有上傳權限，請聯絡管理員。",
+          task_not_found: "找不到任務，請重新整理頁面。",
+          missing_service_role_key: "缺少服務金鑰，請設定 SUPABASE_SERVICE_ROLE_KEY。",
           file_too_large: "檔案超過 10MB 限制，請縮小後再試。",
           image_too_large: "圖片壓縮後仍超過 10MB，請縮小後再試。",
           unauthorized_client:

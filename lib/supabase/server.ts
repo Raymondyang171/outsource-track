@@ -14,7 +14,7 @@ export async function createServerSupabase() {
           return cookieStore.getAll();
         },
         setAll() {
-          // Server Components 不寫 cookie；交給 proxy.ts
+          // Server Components 不寫 cookie；交給 middleware.ts
         },
       },
     }

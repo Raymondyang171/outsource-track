@@ -2,8 +2,28 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
+type CookieOptions = {
+  path?: string;
+  domain?: string;
+  sameSite?: "strict" | "lax" | "none";
+  secure?: boolean;
+  httpOnly?: boolean;
+  maxAge?: number;
+  expires?: Date;
+};
+
 export async function updateSession(request: NextRequest) {
-  let response = NextResponse.next({ request });
+  const response = NextResponse.next({ request });
+  const pathname = request.nextUrl.pathname;
+  const publicPaths = ["/login", "/device/register", "/reset-password", "/api/device/register"];
+  const deviceAdminBypass = ["/admin/devices"];
+  const isApiRequest = pathname.startsWith("/api");
+  const isPublic = publicPaths.some(
+    (path) => pathname === path || pathname.startsWith(`${path}/`)
+  );
+  const isBypass = deviceAdminBypass.some(
+    (path) => pathname === path || pathname.startsWith(`${path}/`)
+  );
 
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -15,16 +35,70 @@ export async function updateSession(request: NextRequest) {
         get(name: string) {
           return request.cookies.get(name)?.value;
         },
-        set(name: string, value: string, options: any) {
+        set(name: string, value: string, options: CookieOptions) {
           response.cookies.set({ name, value, ...options });
         },
-        remove(name: string, options: any) {
+        remove(name: string, options: CookieOptions) {
           response.cookies.set({ name, value: "", ...options, maxAge: 0 });
         },
       },
     }
   );
 
-  await supabase.auth.getUser();
+  const { data: authData } = await supabase.auth.getUser();
+  const user = authData.user;
+
+  if (!user || isPublic) {
+    return response;
+  }
+  if (isBypass) {
+    return response;
+  }
+
+  const deviceId = request.cookies.get("device_id")?.value;
+  if (!deviceId) {
+    console.warn("device_allowlist_blocked", {
+      reason: "missing_device_id",
+      path: pathname,
+      user_id: user.id,
+    });
+    if (isApiRequest) {
+      return NextResponse.json(
+        { ok: false, error: "device_not_registered" },
+        { status: 403 }
+      );
+    }
+    const redirectUrl = request.nextUrl.clone();
+    redirectUrl.pathname = "/device/register";
+    redirectUrl.searchParams.set("next", pathname);
+    return NextResponse.redirect(redirectUrl);
+  }
+
+  const { data: device } = await supabase
+    .from("device_allowlist")
+    .select("approved")
+    .eq("user_id", user.id)
+    .eq("device_id", deviceId)
+    .maybeSingle();
+
+  if (!device?.approved) {
+    console.warn("device_allowlist_blocked", {
+      reason: "device_not_approved",
+      path: pathname,
+      user_id: user.id,
+      device_id: deviceId,
+    });
+    if (isApiRequest) {
+      return NextResponse.json(
+        { ok: false, error: "device_not_approved" },
+        { status: 403 }
+      );
+    }
+    const redirectUrl = request.nextUrl.clone();
+    redirectUrl.pathname = "/device/register";
+    redirectUrl.searchParams.set("next", pathname);
+    return NextResponse.redirect(redirectUrl);
+  }
+
   return response;
 }

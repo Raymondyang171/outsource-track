@@ -16,7 +16,7 @@ export default async function MePage() {
           return cookieStore.getAll();
         },
         setAll() {
-          // Server Components 不能寫 cookie；交給 proxy.ts（Proxy）做
+          // Server Components 不能寫 cookie；交給 middleware.ts 做
         },
       },
     }

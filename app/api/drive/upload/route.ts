@@ -5,6 +5,8 @@ import sharp from "sharp";
 import { createServerSupabase } from "@/lib/supabase/server";
 import { createAdminSupabase } from "@/lib/supabase/admin";
 import { checkPermission } from "@/lib/permissions";
+import { isPlatformAdminFromAccessToken } from "@/lib/auth";
+import { ensureTaskAccess } from "@/lib/guards/ensureTaskAccess";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -67,7 +69,7 @@ async function compressImage(
   } else if (format === "avif") {
     output = await resized.avif({ quality: 50 }).toBuffer();
     outputMime = "image/avif";
-  } else if (format === "heif" || format === "heic") {
+  } else if (format === "heif") {
     output = await resized.heif({ quality: 60 }).toBuffer();
     outputMime = "image/heif";
   }
@@ -107,37 +109,35 @@ export async function POST(request: Request) {
 
   const supabase = await createServerSupabase();
   const { data: authData, error: authErr } = await supabase.auth.getUser();
+  const { data: sessionData } = await supabase.auth.getSession();
   if (authErr || !authData.user) {
     return NextResponse.json({ ok: false, error: "not_authenticated" }, { status: 401 });
   }
+  const isPlatformAdmin = isPlatformAdminFromAccessToken(sessionData.session?.access_token);
 
   let admin;
   try {
     admin = createAdminSupabase();
-  } catch (e: any) {
+  } catch {
     return NextResponse.json({ ok: false, error: "missing_service_role_key" }, { status: 500 });
   }
 
-  const { data: task, error: taskErr } = await admin
-    .from("project_tasks")
-    .select("id, org_id, unit_id")
-    .eq("id", taskId)
-    .maybeSingle();
-
-  if (taskErr || !task) {
-    return NextResponse.json({ ok: false, error: "task_not_found" }, { status: 404 });
+  const taskAccess = await ensureTaskAccess({
+    client: admin,
+    userId: authData.user.id,
+    taskId,
+  });
+  if (!taskAccess.ok) {
+    return NextResponse.json({ ok: false, error: taskAccess.error }, { status: taskAccess.status });
   }
 
-  if (!task.org_id || !task.unit_id) {
-    return NextResponse.json({ ok: false, error: "task_missing_org_unit" }, { status: 400 });
-  }
-
-  const allowed = await checkPermission(admin, authData.user.id, task.org_id, "files", "create");
+  const allowed = isPlatformAdmin
+    || await checkPermission(admin, authData.user.id, taskAccess.task.org_id, "files", "create");
   if (!allowed) {
     return NextResponse.json({ ok: false, error: "permission_denied" }, { status: 403 });
   }
 
-  const inputBuffer = Buffer.from(await file.arrayBuffer());
+  const inputBuffer: Buffer = Buffer.from(await file.arrayBuffer());
   const originalSize = inputBuffer.byteLength;
   const isImage = file.type.startsWith(IMAGE_MIME_PREFIX);
 
@@ -145,7 +145,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: false, error: "file_too_large" }, { status: 413 });
   }
 
-  let buffer = inputBuffer;
+  let buffer: Buffer = inputBuffer;
   let uploadMimeType = file.type || "application/octet-stream";
   let finalSize = originalSize;
   let originalSizeBytes = originalSize;
@@ -195,8 +195,8 @@ export async function POST(request: Request) {
     modified_time: driveFile.modifiedTime ?? new Date().toISOString(),
     uploaded_by: authData.user.id,
     project_task_id: taskId,
-    org_id: task.org_id,
-    unit_id: task.unit_id,
+    org_id: taskAccess.task.org_id,
+    unit_id: taskAccess.task.unit_id,
     file_size_bytes: finalSize,
     original_size_bytes: originalSizeBytes,
   };

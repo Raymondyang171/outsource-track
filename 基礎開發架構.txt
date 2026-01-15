@@ -1,72 +1,65 @@
-前端（Web：管理台/編輯台）
+基礎開發架構（通用範本）
 
-Next.js / React（TypeScript）：適合做表單密集、權限控制、資料表格、彈窗編輯（你想要「點擊跳出編輯，不往下拉」）。
+1) 專案定位與角色
+- 專案名稱：[ProjectName]
+- 主要角色：管理者、單位主管、一般成員、外部協作
+- 主要目標：建立可追溯、可控權限的工程/專案執行流程
 
-UI：shadcn/ui + Tailwind（快速做出一致的企業感介面）。
-全部關於需要資料輸入的部分,都要有新增/修改/刪除等基本功能. 
-留下CSS來調整最後的UI介面,要能做出一致且專業的感覺
+2) 核心資料架構（Data Architecture）
+- 租戶模型：org_id（組織）、unit_id（單位）
+- 基礎表：orgs / units / profiles / memberships
+- 核心表：
+  - projects：專案主檔（名稱、狀態、期間、負責人、單位）
+  - project_tasks：任務明細（所屬專案、狀態、工期、負責人、排序）
+  - progress_logs：進度回報（照片、描述、數量、回報人、時間）
+  - drive_items：檔案索引（檔案來源、連結、所屬專案/任務）
+  - cost_requests / cost_items / cost_attachments：成本請款流程
+  - assist_requests：跨單位協作/支援請求
+  - task_change_logs：任務異動與審計
+- 共通欄位：org_id、unit_id、created_at、updated_at、created_by
+- 命名規範：snake_case；外鍵欄位以 *_id 結尾
 
+3) Project / Task 具體說明（呈現與控制）
+- Project
+  - 資料欄位：名稱、狀態、期間、負責人、單位、預算、標籤
+  - 呈現方式：專案列表 + 篩選（狀態/單位/負責人）
+  - 編輯方式：右側 Drawer 或 Sheet（避免頁面向下跳）
+  - 控制方式：
+    - 狀態流轉：draft -> active -> closed
+    - 權限：同 org 可讀；同 unit 可寫
+- Task
+  - 資料欄位：名稱、描述、狀態、起訖日、工期、負責人、排序
+  - 呈現方式：清單 + 甘特/表格切換
+  - 編輯方式：任務點擊開啟側邊編輯器
+  - 控制方式：
+    - 狀態流轉：todo -> doing -> done
+    - 權限：同 org 可讀；同 unit 可寫
 
-前端（Mobile/Tablet：現場回報）
+4) 權限控制（Permission Control）
+- RLS 核心規則：
+  - SELECT：同 org 可讀
+  - WRITE：同 org + 同 unit 可寫
+- 角色矩陣：admin / manager / member
+- 管理台：使用 service role（或 server action）執行高權限操作
 
-React Native（Expo）：最符合「快速做 MVP、相機/上傳/離線快取」的路線（也跟你「用專案練習 app 開發」的目標一致）。
+5) 儀表板（Dashboard）
+- KPI 指標：
+  - 專案數（進行中/已結案）
+  - 任務完成率、逾期率
+  - 本週進度回報數量
+  - 成本請款金額與狀態分布
+- 圖表：狀態分布、時間序列、部門/單位比較
 
-後端（核心：權限、資料、審計、API）
+6) API 與寫入策略
+- 使用 Supabase Auth + RLS 做一般寫入
+- 重要寫入與後台操作走 server action（service role）
+- 建議提供 RPC：批量寫入、統一驗證與計算（例如請款總額）
 
-Supabase（Postgres + Auth + RLS + Storage/或外掛）：用來承載多租戶/多單位權限、資料表、登入與 API。
+7) 測試與驗收
+- RLS smoke test：正測/負測可重跑
+- UI 驗收：任務編輯、上傳、請款流程
 
-Supabase 本質是「Postgres 開發平台」，含 Database / Auth / Storage 等能力 
-Supabase
-+1
-
-Auth 直接落在你的 Postgres（利於審計與擴充關聯）
-Supabase
-+1
-
-Storage 有細緻存取控管，且可用 RLS 做政策（很適合你「同單位可看/可回報」）
-Supabase
-+1
-
-檔案（你目前指定 Google Drive）
-
-用 Google Drive API 做「資料夾/文件清單」、「上傳/更新」與「權限/連結管理」：
-
-files.list 可列出檔案並用 q 查詢與過濾 
-Google for Developers
-
-Drive API 支援建立/更新時上傳檔案內容 
-Google for Developers
-
-建議做法（企業治理角度）：
-
-Drive 當檔案倉庫（真檔在 Drive）
-
-DB 當索引與權限帳本（存 fileId、webViewLink、所屬 project_id、unit_id、上傳者、類型、時間戳、審計欄位）
-
-App/WEB 以「索引表」呈現清單；點擊用連結預覽或走後端代理。
-
-主要開發工具（你接下來會天天用的那套）
-
-IDE / Vibe Coding 主場
-
-VS Code（或 Cursor 類 VS Code 系）+ Git（你的「短分支/頻繁整合」流程會非常吃這套）
-
-版本控管 / 協作
-
-GitHub（PR、Code Review、Issue 模板、Conventional Commits）
-
-後端與資料
-
-Supabase Console + Supabase CLI（資料表、RLS policy、Edge Functions/Server Actions 串接）
-
-測試與品質
-
-前端：Playwright（Web E2E）、React Testing Library（元件）
-
-API：Postman/Insomnia（快速驗證）
-
-部署
-
-Web：Vercel（或 Cloud Run / Nginx）
-
-Mobile：Expo EAS（打包、發佈、OTA 更新）
+8) 部署與維運
+- Web：Vercel 或 Cloud Run
+- Mobile：Expo EAS
+- 監控：錯誤追蹤、操作紀錄、審計報表

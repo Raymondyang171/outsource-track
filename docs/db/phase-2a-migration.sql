@@ -135,13 +135,13 @@ drop policy if exists projects_write_unit on public.projects;
 create policy projects_select_org
 on public.projects
 for select
-using (public.is_org_member(org_id));
+using (public.is_platform_admin() or public.is_org_member(org_id));
 
 create policy projects_write_unit
 on public.projects
 for all
-using (public.is_unit_member(org_id, unit_id))
-with check (public.is_unit_member(org_id, unit_id));
+using (public.is_platform_admin() or public.is_unit_member(org_id, unit_id))
+with check (public.is_platform_admin() or public.is_unit_member(org_id, unit_id));
 
 
 alter table public.project_tasks enable row level security;
@@ -152,13 +152,13 @@ drop policy if exists project_tasks_write_unit on public.project_tasks;
 create policy project_tasks_select_org
 on public.project_tasks
 for select
-using (public.is_org_member(org_id));
+using (public.is_platform_admin() or public.is_org_member(org_id));
 
 create policy project_tasks_write_unit
 on public.project_tasks
 for all
-using (public.is_unit_member(org_id, unit_id))
-with check (public.is_unit_member(org_id, unit_id));
+using (public.is_platform_admin() or public.is_unit_member(org_id, unit_id))
+with check (public.is_platform_admin() or public.is_unit_member(org_id, unit_id));
 
 
 alter table public.progress_logs enable row level security;
@@ -171,12 +171,12 @@ drop policy if exists progress_logs_write_unit on public.progress_logs;
 create policy progress_logs_select_org
 on public.progress_logs
 for select
-using (public.is_org_member(org_id));
+using (public.is_platform_admin() or public.is_org_member(org_id));
 
 create policy progress_logs_write_unit
 on public.progress_logs
 for all
-using (public.is_unit_member(org_id, unit_id))
-with check (public.is_unit_member(org_id, unit_id));
+using (public.is_platform_admin() or public.is_unit_member(org_id, unit_id))
+with check (public.is_platform_admin() or public.is_unit_member(org_id, unit_id));
 
 commit;

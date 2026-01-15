@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 import { google } from "googleapis";
 import { createServerSupabase } from "@/lib/supabase/server";
+import { createAdminSupabase } from "@/lib/supabase/admin";
+import { checkPermission } from "@/lib/permissions";
+import { isPlatformAdminFromAccessToken } from "@/lib/auth";
+import { ensureTaskAccess } from "@/lib/guards/ensureTaskAccess";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -29,18 +33,49 @@ export async function GET(request: Request) {
 
   const supabase = await createServerSupabase();
   const { data: authData, error: authErr } = await supabase.auth.getUser();
+  const { data: sessionData } = await supabase.auth.getSession();
   if (authErr || !authData.user) {
     return NextResponse.json({ ok: false, error: "not_authenticated" }, { status: 401 });
   }
 
-  const { data: item, error: itemErr } = await supabase
+  let admin;
+  try {
+    admin = createAdminSupabase();
+  } catch {
+    return NextResponse.json({ ok: false, error: "missing_service_role_key" }, { status: 500 });
+  }
+
+  const { data: item, error: itemErr } = await admin
     .from("drive_items")
-    .select("thumbnail_link, drive_file_id")
+    .select("thumbnail_link, drive_file_id, org_id, unit_id, project_task_id")
     .eq("id", itemId)
     .maybeSingle();
 
   if (itemErr) {
     return NextResponse.json({ ok: false, error: "thumbnail_not_found" }, { status: 404 });
+  }
+
+  if (!item) {
+    return NextResponse.json({ ok: false, error: "thumbnail_not_found" }, { status: 404 });
+  }
+
+  const isPlatformAdmin = isPlatformAdminFromAccessToken(sessionData.session?.access_token);
+  const taskAccess = await ensureTaskAccess({
+    client: admin,
+    userId: authData.user.id,
+    taskId: item.project_task_id,
+    driveItemOrgId: item.org_id,
+    driveItemUnitId: item.unit_id,
+  });
+  if (!taskAccess.ok) {
+    return NextResponse.json({ ok: false, error: taskAccess.error }, { status: taskAccess.status });
+  }
+
+  if (!isPlatformAdmin) {
+    const allowed = await checkPermission(admin, authData.user.id, taskAccess.task.org_id, "files", "read");
+    if (!allowed) {
+      return NextResponse.json({ ok: false, error: "permission_denied" }, { status: 403 });
+    }
   }
 
   const oauth = getOAuthClient();
@@ -59,7 +94,7 @@ export async function GET(request: Request) {
       });
       thumbnailLink = fileRes.data.thumbnailLink ?? null;
       if (thumbnailLink) {
-        await supabase
+        await admin
           .from("drive_items")
           .update({ thumbnail_link: thumbnailLink })
           .eq("id", itemId);

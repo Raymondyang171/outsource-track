@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { createServerSupabase } from "@/lib/supabase/server";
 import { createAdminSupabase } from "@/lib/supabase/admin";
 import { checkPermission, getPermissionsForResource } from "@/lib/permissions";
+import { isPlatformAdminFromAccessToken } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 
@@ -25,7 +26,7 @@ type PermissionSet = {
   delete: boolean;
 };
 
-const roles = ["viewer", "member", "manager", "admin"];
+const baseRoles = ["viewer", "member", "manager", "admin"];
 const permissionLabels = [
   { id: "read", label: "可讀" },
   { id: "create", label: "可新增" },
@@ -36,14 +37,19 @@ const resources = [
   { id: "projects", label: "專案" },
   { id: "tasks", label: "任務" },
   { id: "files", label: "檔案" },
+  { id: "costs", label: "費用分析" },
+  { id: "cost_types", label: "費用類型" },
   { id: "users", label: "使用者" },
-  { id: "companies", label: "公司" },
+  { id: "roles", label: "權限設定" },
+  { id: "memberships", label: "成員管理（使用者頁面）" },
   { id: "departments", label: "部門" },
-  { id: "memberships", label: "成員" },
+  { id: "companies", label: "公司" },
+  { id: "devices", label: "設備授權" },
+  { id: "logs", label: "系統記錄" },
 ] as const;
 
 const defaultRolePermissions: Record<string, Record<string, PermissionSet>> = Object.fromEntries(
-  roles.map((role) => [
+  baseRoles.map((role) => [
     role,
     Object.fromEntries(
       resources.map((resource) => {
@@ -83,7 +89,7 @@ async function updateRolePermissionsAction(formData: FormData) {
   }
 
   const role = String(formData.get("role") ?? "").trim();
-  if (!roles.includes(role)) {
+  if (!role) {
     redirect(`/admin/roles?error=${encodeMsg("invalid role")}`);
   }
 
@@ -94,7 +100,12 @@ async function updateRolePermissionsAction(formData: FormData) {
     can_create: formData.get(`${resource.id}__create`) === "on",
     can_update: formData.get(`${resource.id}__update`) === "on",
     can_delete: formData.get(`${resource.id}__delete`) === "on",
-  }));
+  }))
+    .map((row) =>
+      row.can_read
+        ? row
+        : { ...row, can_create: false, can_update: false, can_delete: false }
+    );
 
   const admin = createAdminSupabase();
   const allowed = await checkPermission(admin, user.id, null, "roles", "update");
@@ -112,14 +123,68 @@ async function updateRolePermissionsAction(formData: FormData) {
   redirect(`/admin/roles?ok=updated`);
 }
 
+async function createRoleAction(formData: FormData) {
+  "use server";
+
+  const supabase = await createServerSupabase();
+  const { data } = await supabase.auth.getUser();
+  const { data: sessionData } = await supabase.auth.getSession();
+  const user = data.user;
+  if (!user) {
+    redirect("/login");
+  }
+
+  const role = String(formData.get("role") ?? "").trim();
+  if (!role) {
+    redirect(`/admin/roles?error=${encodeMsg("role_name_required")}`);
+  }
+
+  const admin = createAdminSupabase();
+  const allowed = await checkPermission(admin, user.id, null, "roles", "create");
+  if (!allowed) {
+    redirect(`/admin/roles?error=${encodeMsg("permission_denied")}`);
+  }
+
+  const { data: existing } = await admin
+    .from("role_permissions")
+    .select("role")
+    .eq("role", role)
+    .limit(1);
+
+  if ((existing ?? []).length > 0 || baseRoles.includes(role)) {
+    redirect(`/admin/roles?error=${encodeMsg("role_already_exists")}`);
+  }
+
+  const rows: PermissionRow[] = resources.map((resource) => ({
+    role,
+    resource: resource.id,
+    can_read: true,
+    can_create: false,
+    can_update: false,
+    can_delete: false,
+  }));
+
+  const { error } = await admin
+    .from("role_permissions")
+    .insert(rows);
+
+  if (error) {
+    redirect(`/admin/roles?error=${encodeMsg(error.message)}`);
+  }
+
+  redirect(`/admin/roles?ok=created`);
+}
+
 export default async function AdminRolesPage({ searchParams }: PageProps) {
   const sp = await searchParams;
   const ok = getParam(sp?.ok);
   const error = getParam(sp?.error);
-  const okMsg = ok === "updated" ? "已更新角色權限。" : null;
+  const okMsg =
+    ok === "updated" ? "已更新權限。" : ok === "created" ? "已新增權限。" : null;
 
   const supabase = await createServerSupabase();
   const { data } = await supabase.auth.getUser();
+  const { data: sessionData } = await supabase.auth.getSession();
   const user = data.user;
 
   const missingKey = !process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -138,14 +203,16 @@ export default async function AdminRolesPage({ searchParams }: PageProps) {
   if (missingKey || !admin) {
     return (
       <div className="admin-page">
-        Missing <code>SUPABASE_SERVICE_ROLE_KEY</code> in <code>.env.local</code>.
+        缺少 <code>SUPABASE_SERVICE_ROLE_KEY</code>，請在 <code>.env.local</code> 設定。
       </div>
     );
   }
 
+  const isPlatformAdmin = isPlatformAdminFromAccessToken(sessionData.session?.access_token);
   const rolePerms = await getPermissionsForResource(admin, user.id, null, "roles");
-  const canRead = rolePerms.permissions?.read ?? false;
-  const canUpdate = rolePerms.permissions?.update ?? false;
+  const canRead = isPlatformAdmin ? true : rolePerms.permissions?.read ?? false;
+  const canCreate = isPlatformAdmin ? true : rolePerms.permissions?.create ?? false;
+  const canUpdate = isPlatformAdmin ? true : rolePerms.permissions?.update ?? false;
 
   let permissionRows: PermissionRow[] = [];
   let tableMissing = false;
@@ -180,11 +247,44 @@ export default async function AdminRolesPage({ searchParams }: PageProps) {
     };
   });
 
+  const roleSet = new Set<string>(baseRoles);
+  permissionRows.forEach((row) => roleSet.add(row.role));
+  const roles = [...roleSet].sort((a, b) => {
+    const ai = baseRoles.indexOf(a);
+    const bi = baseRoles.indexOf(b);
+    if (ai === -1 && bi === -1) return a.localeCompare(b);
+    if (ai === -1) return 1;
+    if (bi === -1) return -1;
+    return ai - bi;
+  });
+
+  roles.forEach((role) => {
+    if (!permissionMap[role]) {
+      permissionMap[role] = Object.fromEntries(
+        resources.map((resource) => [
+          resource.id,
+          { read: false, create: false, update: false, delete: false },
+        ])
+      );
+    }
+    resources.forEach((resource) => {
+      const perms = permissionMap[role][resource.id];
+      if (!perms.read) {
+        permissionMap[role][resource.id] = {
+          read: false,
+          create: false,
+          update: false,
+          delete: false,
+        };
+      }
+    });
+  });
+
   if (!canRead) {
     return (
       <div className="admin-page">
         <h1>權限設定</h1>
-        <p className="admin-error">目前角色沒有檢視權限。</p>
+        <p className="admin-error">目前權限不足，無法檢視。</p>
       </div>
     );
   }
@@ -200,6 +300,13 @@ export default async function AdminRolesPage({ searchParams }: PageProps) {
           缺少 <code>role_permissions</code> 資料表，請先建立後再設定權限。
         </p>
       )}
+
+      <form className="admin-form" action={createRoleAction}>
+        <input name="role" placeholder="新權限名稱（例如: contractor）" />
+        <button type="submit" className="btn btn-primary" disabled={tableMissing || !canCreate}>
+          新增權限
+        </button>
+      </form>
 
       {roles.map((role) => (
         <form key={role} className="admin-section" action={updateRolePermissionsAction}>

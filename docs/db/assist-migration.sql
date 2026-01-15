@@ -35,27 +35,27 @@ drop policy if exists assist_requests_select_org on public.assist_requests;
 create policy assist_requests_select_org
 on public.assist_requests
 for select
-using (public.is_org_member(org_id));
+using (public.is_platform_admin() or public.is_org_member(org_id));
 
 drop policy if exists assist_requests_insert_requester on public.assist_requests;
 create policy assist_requests_insert_requester
 on public.assist_requests
 for insert
-with check (public.is_unit_member(org_id, unit_id));
+with check (public.is_platform_admin() or public.is_unit_member(org_id, unit_id));
 
 drop policy if exists assist_requests_update_parties on public.assist_requests;
 create policy assist_requests_update_parties
 on public.assist_requests
 for update
 using (
-  public.is_unit_member(org_id, unit_id) or public.is_unit_member(org_id, to_unit_id)
+  public.is_platform_admin() or public.is_unit_member(org_id, unit_id) or public.is_unit_member(org_id, to_unit_id)
 )
 with check (
-  public.is_unit_member(org_id, unit_id) or public.is_unit_member(org_id, to_unit_id)
+  public.is_platform_admin() or public.is_unit_member(org_id, unit_id) or public.is_unit_member(org_id, to_unit_id)
 );
 
 drop policy if exists assist_requests_delete_requester on public.assist_requests;
 create policy assist_requests_delete_requester
 on public.assist_requests
 for delete
-using (public.is_unit_member(org_id, unit_id));
+using (public.is_platform_admin() or public.is_unit_member(org_id, unit_id));

@@ -31,7 +31,7 @@ export default function Home() {
         <div className="card">
           <div className="card-header">
             <div className="card-title">多視圖工作台</div>
-            <span className="badge">Board / Timeline</span>
+            <span className="badge">看板 / 時間軸</span>
           </div>
           <div className="page-subtitle">
             從看板到時間軸，快速切換視角，保持節奏一致。

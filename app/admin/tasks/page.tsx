@@ -6,6 +6,8 @@ import { createAdminSupabase } from "@/lib/supabase/admin";
 import { checkPermission, getPermissionsForResource } from "@/lib/permissions";
 import ConfirmForm from "@/components/confirm-form";
 import SearchForm from "./search-form";
+import { isPlatformAdminFromAccessToken } from "@/lib/auth";
+import { getLatestUserOrgId } from "@/lib/org";
 
 export const dynamic = "force-dynamic";
 
@@ -39,10 +41,12 @@ async function updateTaskAction(formData: FormData) {
 
   const supabase = await createServerSupabase();
   const { data } = await supabase.auth.getUser();
+  const { data: sessionData } = await supabase.auth.getSession();
   const authedUser = data.user;
   if (!authedUser) {
     redirect("/login");
   }
+  const isPlatformAdmin = isPlatformAdminFromAccessToken(sessionData.session?.access_token);
 
   const taskId = String(formData.get("task_id") ?? "").trim();
   if (!taskId) return;
@@ -85,7 +89,7 @@ async function updateTaskAction(formData: FormData) {
     .eq("id", taskId)
     .maybeSingle();
 
-  const allowed = await checkPermission(admin, authedUser.id, taskRow?.org_id ?? null, "tasks", "update");
+  const allowed = isPlatformAdmin || await checkPermission(admin, authedUser.id, taskRow?.org_id ?? null, "tasks", "update");
   if (!allowed) {
     redirect(`/admin/tasks?error=${encodeURIComponent("permission_denied")}`);
   }
@@ -113,10 +117,12 @@ async function deleteTaskAction(formData: FormData) {
 
   const supabase = await createServerSupabase();
   const { data } = await supabase.auth.getUser();
+  const { data: sessionData } = await supabase.auth.getSession();
   const authedUser = data.user;
   if (!authedUser) {
     redirect("/login");
   }
+  const isPlatformAdmin = isPlatformAdminFromAccessToken(sessionData.session?.access_token);
 
   const taskId = String(formData.get("task_id") ?? "").trim();
   const redirectProjectId = String(formData.get("project_id") ?? "").trim();
@@ -129,7 +135,7 @@ async function deleteTaskAction(formData: FormData) {
     .eq("id", taskId)
     .maybeSingle();
 
-  const allowed = await checkPermission(admin, authedUser.id, taskRow?.org_id ?? null, "tasks", "delete");
+  const allowed = isPlatformAdmin || await checkPermission(admin, authedUser.id, taskRow?.org_id ?? null, "tasks", "delete");
   if (!allowed) {
     redirect(`/admin/tasks?error=${encodeURIComponent("permission_denied")}`);
   }
@@ -146,10 +152,12 @@ async function createTaskAction(formData: FormData) {
 
   const supabase = await createServerSupabase();
   const { data } = await supabase.auth.getUser();
+  const { data: sessionData } = await supabase.auth.getSession();
   const user = data.user;
   if (!user) {
     redirect("/login");
   }
+  const isPlatformAdmin = isPlatformAdminFromAccessToken(sessionData.session?.access_token);
 
   const formOrgId = String(formData.get("org_id") ?? "").trim();
   const unitId = String(formData.get("unit_id") ?? "").trim();
@@ -179,7 +187,7 @@ async function createTaskAction(formData: FormData) {
     redirect(`/admin/tasks?error=${encodeURIComponent(projectErr?.message || "project_lookup_failed")}`);
   }
 
-  const allowed = await checkPermission(adminClient, user.id, resolvedOrgId, "tasks", "create");
+  const allowed = isPlatformAdmin || await checkPermission(adminClient, user.id, resolvedOrgId, "tasks", "create");
   if (!allowed) {
     redirect(`/admin/tasks?error=${encodeURIComponent("permission_denied")}`);
   }
@@ -220,18 +228,46 @@ function getParam(value: string | string[] | undefined) {
   return Array.isArray(value) ? value[0] : value;
 }
 
+const TASK_SORT_FIELDS = new Set([
+  "name",
+  "phase_name",
+  "owner_unit_id",
+  "progress",
+  "updated_at",
+]);
+
+function buildQueryString(params: Record<string, string | undefined>) {
+  const sp = new URLSearchParams();
+  Object.entries(params).forEach(([key, value]) => {
+    if (value) sp.set(key, value);
+  });
+  const query = sp.toString();
+  return query ? `?${query}` : "";
+}
+
 export default async function AdminTasksPage({
   searchParams,
 }: {
-  searchParams: Promise<{ project_id?: string; q?: string }>;
+  searchParams: Promise<{
+    project_id?: string | string[];
+    q?: string | string[];
+    sort_by?: string | string[];
+    sort_dir?: string | string[];
+    error?: string | string[];
+  }>;
 }) {
   const sp = await searchParams;
-  const projectIdFilter = sp?.project_id;
-  const searchTerm = sp?.q;
-  const errorMsg = sp?.error as string | undefined;
+  const projectIdFilter = getParam(sp?.project_id);
+  const searchTerm = getParam(sp?.q);
+  const sortByRaw = getParam(sp?.sort_by);
+  const sortDirRaw = getParam(sp?.sort_dir);
+  const errorMsg = getParam(sp?.error);
+  const sortBy = sortByRaw && TASK_SORT_FIELDS.has(sortByRaw) ? sortByRaw : null;
+  const sortDir = sortDirRaw === "asc" || sortDirRaw === "desc" ? sortDirRaw : null;
 
   const supabase = await createServerSupabase();
   const { data } = await supabase.auth.getUser();
+  const { data: sessionData } = await supabase.auth.getSession();
   const user = data.user;
 
   const missingKey = !process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -239,6 +275,7 @@ export default async function AdminTasksPage({
   if (!user) {
     redirect("/login");
   }
+  const isPlatformAdmin = isPlatformAdminFromAccessToken(sessionData.session?.access_token);
 
   let admin;
   try {
@@ -250,48 +287,62 @@ export default async function AdminTasksPage({
   if (missingKey || !admin) {
     return (
       <div className="admin-page">
-        Missing <code>SUPABASE_SERVICE_ROLE_KEY</code> in <code>.env.local</code>.
+        缺少 <code>SUPABASE_SERVICE_ROLE_KEY</code>，請在 <code>.env.local</code> 設定。
       </div>
     );
   }
 
-  const { data: myMems, error: myErr } = await admin
-    .from("memberships")
-    .select("org_id, created_at")
-    .eq("user_id", user.id)
-    .order("created_at", { ascending: false })
-    .limit(1);
+  const orgId = isPlatformAdmin ? null : await getLatestUserOrgId(admin, user.id);
 
-  if (myErr) {
-    return <div className="admin-page">membership lookup failed: {myErr.message}</div>;
+  if (!isPlatformAdmin && !orgId) {
+    return (
+      <div className="admin-page">
+        <h1>任務管理</h1>
+        <p className="admin-error">尚未綁定公司，請先建立成員關係。</p>
+      </div>
+    );
   }
 
-  const orgId = myMems?.[0]?.org_id ?? null;
+  const { data: orgs, error: orgErr } = isPlatformAdmin
+    ? await admin.from("orgs").select("id, name")
+    : await admin.from("orgs").select("id, name").eq("id", orgId);
 
-  const { data: orgs, error: orgErr } = orgId
-    ? await admin.from("orgs").select("id, name").eq("id", orgId)
-    : await admin.from("orgs").select("id, name");
+  const { data: units, error: unitErr } = isPlatformAdmin
+    ? await admin.from("units").select("id, name, org_id").order("name", { ascending: true })
+    : await admin.from("units").select("id, name, org_id").eq("org_id", orgId).order("name", { ascending: true });
 
-  const { data: units, error: unitErr } = orgId
-    ? await admin.from("units").select("id, name, org_id").eq("org_id", orgId).order("name", { ascending: true })
-    : await admin.from("units").select("id, name, org_id").order("name", { ascending: true });
+  const { data: projects, error: projErr } = isPlatformAdmin
+    ? await admin.from("projects").select("id, name, org_id, unit_id").order("created_at", { ascending: false })
+    : await admin.from("projects").select("id, name, org_id, unit_id").eq("org_id", orgId).order("created_at", { ascending: false });
 
-  const { data: projects, error: projErr } = orgId
-    ? await admin.from("projects").select("id, name, org_id, unit_id").eq("org_id", orgId).order("created_at", { ascending: false })
-    : await admin.from("projects").select("id, name, org_id, unit_id").order("created_at", { ascending: false });
-
-  const { data: userList } = await admin.auth.admin.listUsers({ perPage: 1000 });
-  const users = userList?.users ?? [];
-  const userIds = users.map((u) => u.id);
-  const { data: profileList } = userIds.length
-    ? await admin.from("profiles").select("user_id, display_name").in("user_id", userIds)
-    : { data: [] as Array<{ user_id: string; display_name: string | null }> };
-
-  const displayById = new Map((profileList ?? []).map((p) => [p.user_id, p.display_name]));
-  const userOptions = users.map((u) => ({
-    id: u.id,
-    displayName: (displayById.get(u.id) ?? "").trim() || emailToDisplayName(u.email),
-  }));
+  let userOptions: Array<{ id: string; displayName: string }> = [];
+  if (isPlatformAdmin) {
+    const { data: userList } = await admin.auth.admin.listUsers({ perPage: 1000 });
+    const users = userList?.users ?? [];
+    const userIds = users.map((u) => u.id);
+    const { data: profileList } = userIds.length
+      ? await admin.from("profiles").select("user_id, display_name").in("user_id", userIds)
+      : { data: [] as Array<{ user_id: string; display_name: string | null }> };
+    const displayById = new Map((profileList ?? []).map((p) => [p.user_id, p.display_name]));
+    userOptions = users.map((u) => ({
+      id: u.id,
+      displayName: (displayById.get(u.id) ?? "").trim() || emailToDisplayName(u.email),
+    }));
+  } else if (orgId) {
+    const { data: memberRows } = await admin
+      .from("memberships")
+      .select("user_id")
+      .eq("org_id", orgId);
+    const memberIds = Array.from(new Set((memberRows ?? []).map((m) => m.user_id)));
+    const { data: profileList } = memberIds.length
+      ? await admin.from("profiles").select("user_id, display_name").in("user_id", memberIds)
+      : { data: [] as Array<{ user_id: string; display_name: string | null }> };
+    const displayById = new Map((profileList ?? []).map((p) => [p.user_id, p.display_name]));
+    userOptions = memberIds.map((id) => ({
+      id,
+      displayName: (displayById.get(id) ?? "").trim() || "未知使用者",
+    }));
+  }
 
   let taskQuery = admin
     .from("project_tasks")
@@ -309,6 +360,10 @@ export default async function AdminTasksPage({
     taskQuery = taskQuery.ilike("name", `%${searchTerm}%`);
   }
 
+  if (sortBy && sortDir) {
+    taskQuery = taskQuery.order(sortBy, { ascending: sortDir === "asc" });
+  }
+
   const { data: tasks, error } = await taskQuery
     .order("updated_at", { ascending: false })
     .limit(200);
@@ -316,16 +371,46 @@ export default async function AdminTasksPage({
   const taskIds = (tasks ?? []).map((task) => task.id);
   let driveItems: DriveItem[] = [];
   let driveErr: { message?: string } | null = null;
+  let allowedUnitIds: string[] | null = null;
+
+  if (!isPlatformAdmin && orgId) {
+    const { data: membershipRows } = await admin
+      .from("memberships")
+      .select("unit_id, role")
+      .eq("org_id", orgId)
+      .eq("user_id", user.id);
+    const rows = membershipRows ?? [];
+    const isOrgAdmin = rows.some((row) => row.role === "admin");
+    if (!isOrgAdmin) {
+      allowedUnitIds = rows.map((row) => row.unit_id).filter((unitId) => !!unitId);
+    }
+  }
 
   if (taskIds.length > 0) {
-    const { data: driveList, error: driveError } = await admin
+    let driveQuery = admin
       .from("drive_items")
       .select("id, project_task_id, name, web_view_link, thumbnail_link, mime_type")
       .in("project_task_id", taskIds)
       .order("modified_time", { ascending: false });
-    driveItems = driveList ?? [];
-    if (driveError) {
-      driveErr = driveError;
+    if (!isPlatformAdmin && orgId) {
+      driveQuery = driveQuery.eq("org_id", orgId);
+    }
+    let executeQuery = true;
+    if (allowedUnitIds) {
+      if (allowedUnitIds.length === 0) {
+        driveItems = [];
+        driveErr = { message: "permission_denied" };
+        executeQuery = false;
+      } else {
+        driveQuery = driveQuery.in("unit_id", allowedUnitIds);
+      }
+    }
+    if (executeQuery) {
+      const { data: driveList, error: driveError } = await driveQuery;
+      driveItems = driveList ?? [];
+      if (driveError) {
+        driveErr = driveError;
+      }
     }
   }
 
@@ -375,16 +460,16 @@ export default async function AdminTasksPage({
   const taskNameById = Object.fromEntries((tasks ?? []).map((task) => [task.id, task.name]));
   const selectedProject = (projects ?? []).find((project) => project.id === projectIdFilter);
   const taskPerms = await getPermissionsForResource(admin, user.id, orgId, "tasks");
-  const canRead = taskPerms.permissions?.read ?? false;
-  const canCreate = taskPerms.permissions?.create ?? false;
-  const canUpdate = taskPerms.permissions?.update ?? false;
-  const canDelete = taskPerms.permissions?.delete ?? false;
+  const canRead = isPlatformAdmin ? true : taskPerms.permissions?.read ?? false;
+  const canCreate = isPlatformAdmin ? true : taskPerms.permissions?.create ?? false;
+  const canUpdate = isPlatformAdmin ? true : taskPerms.permissions?.update ?? false;
+  const canDelete = isPlatformAdmin ? true : taskPerms.permissions?.delete ?? false;
 
   if (!canRead) {
     return (
       <div className="admin-page">
         <h1>任務管理</h1>
-        <p className="admin-error">目前角色沒有檢視權限。</p>
+        <p className="admin-error">目前權限不足，無法檢視。</p>
       </div>
     );
   }
@@ -400,7 +485,7 @@ export default async function AdminTasksPage({
           </h1>
           <p className="text-slate-500 text-sm mt-1">
             管理所有專案的任務進度與詳細資訊
-            {!orgId && <span className="text-amber-600 ml-2">(未綁定組織，顯示全部)</span>}
+            {!isPlatformAdmin && !orgId && <span className="text-amber-600 ml-2">(尚未綁定組織)</span>}
           </p>
         </div>
         <div className="flex gap-3">
@@ -509,20 +594,95 @@ export default async function AdminTasksPage({
           <p className="text-slate-400">目前沒有符合條件的任務</p>
         </div>
       ) : (
-        <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+        <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-x-auto overflow-y-visible">
           <table className="w-full text-left border-collapse">
             <thead>
               <tr className="bg-slate-50 border-b border-slate-200 text-xs uppercase text-slate-500 font-semibold tracking-wider">
-                <th className="px-6 py-4">任務名稱</th>
-                <th className="px-6 py-4">專案 / 階段</th>
-                <th className="px-6 py-4">負責部門</th>
-                <th className="px-6 py-4">進度</th>
-                <th className="px-6 py-4">更新時間</th>
+                <th className="px-6 py-4">
+                  <div className="flex items-center gap-2">
+                    <span>任務名稱</span>
+                    <a
+                      className="text-xs font-semibold text-slate-500 hover:text-slate-700"
+                      href={buildQueryString({
+                        project_id: projectIdFilter,
+                        q: searchTerm,
+                        sort_by: "name",
+                        sort_dir: sortBy === "name" && sortDir === "asc" ? "desc" : "asc",
+                      })}
+                    >
+                      {sortBy === "name" ? (sortDir === "asc" ? "▲" : "▼") : "△"}
+                    </a>
+                  </div>
+                </th>
+                <th className="px-6 py-4">
+                  <div className="flex items-center gap-2">
+                    <span>專案 / 階段</span>
+                    <a
+                      className="text-xs font-semibold text-slate-500 hover:text-slate-700"
+                      href={buildQueryString({
+                        project_id: projectIdFilter,
+                        q: searchTerm,
+                        sort_by: "phase_name",
+                        sort_dir: sortBy === "phase_name" && sortDir === "asc" ? "desc" : "asc",
+                      })}
+                    >
+                      {sortBy === "phase_name" ? (sortDir === "asc" ? "▲" : "▼") : "△"}
+                    </a>
+                  </div>
+                </th>
+                <th className="px-6 py-4">
+                  <div className="flex items-center gap-2">
+                    <span>負責部門</span>
+                    <a
+                      className="text-xs font-semibold text-slate-500 hover:text-slate-700"
+                      href={buildQueryString({
+                        project_id: projectIdFilter,
+                        q: searchTerm,
+                        sort_by: "owner_unit_id",
+                        sort_dir: sortBy === "owner_unit_id" && sortDir === "asc" ? "desc" : "asc",
+                      })}
+                    >
+                      {sortBy === "owner_unit_id" ? (sortDir === "asc" ? "▲" : "▼") : "△"}
+                    </a>
+                  </div>
+                </th>
+                <th className="px-6 py-4">
+                  <div className="flex items-center gap-2">
+                    <span>進度</span>
+                    <a
+                      className="text-xs font-semibold text-slate-500 hover:text-slate-700"
+                      href={buildQueryString({
+                        project_id: projectIdFilter,
+                        q: searchTerm,
+                        sort_by: "progress",
+                        sort_dir: sortBy === "progress" && sortDir === "asc" ? "desc" : "asc",
+                      })}
+                    >
+                      {sortBy === "progress" ? (sortDir === "asc" ? "▲" : "▼") : "△"}
+                    </a>
+                  </div>
+                </th>
+                <th className="px-6 py-4">
+                  <div className="flex items-center gap-2">
+                    <span>更新時間</span>
+                    <a
+                      className="text-xs font-semibold text-slate-500 hover:text-slate-700"
+                      href={buildQueryString({
+                        project_id: projectIdFilter,
+                        q: searchTerm,
+                        sort_by: "updated_at",
+                        sort_dir: sortBy === "updated_at" && sortDir === "asc" ? "desc" : "asc",
+                      })}
+                    >
+                      {sortBy === "updated_at" ? (sortDir === "asc" ? "▲" : "▼") : "△"}
+                    </a>
+                  </div>
+                </th>
                 <th className="px-6 py-4 text-right">操作</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-          {tasks.map((t) => (
+          {tasks?.map((t) => (
                 <tr key={t.id} className="hover:bg-slate-50 transition-colors group">
                   <td className="px-6 py-4">
                     <div className="font-medium text-slate-900 flex items-center gap-2">
@@ -555,97 +715,118 @@ export default async function AdminTasksPage({
                     {new Date(t.updated_at).toLocaleDateString()}
                   </td>
                   <td className="px-6 py-4 text-right">
-                    <details className="relative inline-block text-left">
-                      <summary className="text-slate-400 hover:text-blue-600 cursor-pointer list-none p-1 rounded hover:bg-slate-100">
+                    <div className="relative inline-block text-left">
+                      <input
+                        id={`task-edit-${t.id}`}
+                        type="checkbox"
+                        className="peer hidden"
+                      />
+                      <label
+                        htmlFor={`task-edit-${t.id}`}
+                        className="text-slate-400 hover:text-blue-600 cursor-pointer list-none p-1 rounded hover:bg-slate-100"
+                      >
                         編輯
-                      </summary>
-                      <div className="absolute right-0 mt-2 w-80 bg-white rounded-xl shadow-xl border border-slate-200 p-4 z-20 text-left">
-                        <h4 className="font-bold text-slate-800 mb-3 text-sm">編輯任務</h4>
-                        <form className="flex flex-col gap-3" action={updateTaskAction}>
-                      <input type="hidden" name="task_id" value={t.id} />
-                          <div className="grid grid-cols-2 gap-2">
-                            <input name="phase_name" defaultValue={t.phase_name} placeholder="階段" className="w-full p-2 border rounded text-xs" disabled={!canUpdate} />
-                            <input name="code" defaultValue={t.code ?? ""} placeholder="代碼" className="w-full p-2 border rounded text-xs" disabled={!canUpdate} />
-                          </div>
-                          <input name="name" defaultValue={t.name} placeholder="任務名稱" className="w-full p-2 border rounded text-xs" disabled={!canUpdate} />
-                          <div className="grid grid-cols-3 gap-2">
-                            <input name="seq" defaultValue={String(t.seq)} placeholder="序號" className="w-full p-2 border rounded text-xs" disabled={!canUpdate} />
-                            <input name="progress" defaultValue={String(t.progress)} placeholder="進度" className="w-full p-2 border rounded text-xs" disabled={!canUpdate} />
-                            <input name="duration_days" defaultValue={String(t.duration_days ?? 1)} placeholder="工期" className="w-full p-2 border rounded text-xs" disabled={!canUpdate} />
-                          </div>
-                        <input
-                          name="start_offset_days"
-                          defaultValue={String(t.start_offset_days ?? 0)}
-                          placeholder="開始偏移日"
-                            className="w-full p-2 border rounded text-xs"
-                          disabled={!canUpdate}
-                        />
-                          <select name="unit_id" defaultValue={t.unit_id} className="w-full p-2 border rounded text-xs" disabled={!canUpdate}>
-                          {(units ?? []).map((unit) => (
-                            <option key={unit.id} value={unit.id}>
-                              {unit.name}
-                            </option>
-                          ))}
-                        </select>
-                          <select name="owner_unit_id" defaultValue={t.owner_unit_id ?? ""} className="w-full p-2 border rounded text-xs" disabled={!canUpdate}>
-                          <option value="">選擇部門</option>
-                          {(units ?? []).map((unit) => (
-                            <option key={unit.id} value={unit.id}>
-                              {unit.name}
-                            </option>
-                          ))}
-                        </select>
-                          <div className="border-t border-slate-100 my-1"></div>
-                          <input name="completed_at" placeholder="完成時間 (YYYY-MM-DD HH:mm)" className="w-full p-2 border rounded text-xs" disabled={!canUpdate} />
-                          <input name="action" placeholder="動作紀錄" className="w-full p-2 border rounded text-xs" disabled={!canUpdate} />
-                          <input name="note" placeholder="備註" className="w-full p-2 border rounded text-xs" disabled={!canUpdate} />
-                          <button type="submit" className="w-full bg-slate-800 hover:bg-slate-900 text-white py-2 rounded text-xs font-medium" disabled={!canUpdate}>
-                            更新任務
-                      </button>
-                    </form>
-                        
-                        {/* 檔案列表區塊 (唯讀) */}
-                      {(filesByTask[t.id] ?? []).length > 0 && (
-                          <div className="mt-4 pt-3 border-t border-slate-100">
-                            <h5 className="text-xs font-bold text-slate-500 mb-2">已上傳檔案</h5>
-                          {(filesByTask[t.id] ?? []).map((file) => {
-                            const thumbSrc = getThumbnailSrc(file);
-                            return (
-                                <div className="flex items-center gap-2 mb-2 p-1.5 bg-slate-50 rounded border border-slate-100" key={file.id}>
-                                {thumbSrc ? (
-                                    <img className="w-8 h-8 rounded object-cover" src={thumbSrc} alt={file.name} loading="lazy" />
-                                ) : (
-                                    <div className="w-8 h-8 rounded bg-slate-200 flex items-center justify-center text-[10px] text-slate-500">FILE</div>
-                                )}
-                                  <div className="flex-1 min-w-0">
-                                    <div className="text-xs font-medium truncate">{file.name}</div>
-                                    <a className="text-[10px] text-blue-500 hover:underline truncate block" href={file.web_view_link} target="_blank" rel="noreferrer">
-                                      開啟連結
-                                  </a>
-                                </div>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      )}
-                        
-                        {canDelete && (
-                          <div className="mt-4 pt-3 border-t border-slate-100">
-                            <ConfirmForm
-                              className="w-full"
-                              action={deleteTaskAction}
-                              confirmMessage="確定要刪除此任務嗎？相關檔案也會一起刪除。"
+                      </label>
+                      <label
+                        htmlFor={`task-edit-${t.id}`}
+                        className="fixed inset-0 bg-black/40 z-40 hidden peer-checked:block"
+                      />
+                      <div className="fixed inset-0 z-50 hidden items-center justify-center peer-checked:flex">
+                        <div className="w-[min(520px,92vw)] max-h-[90vh] overflow-y-auto bg-white rounded-xl shadow-xl border border-slate-200 p-4 text-left">
+                          <div className="flex items-center justify-between mb-3">
+                            <h4 className="font-bold text-slate-800 text-sm">編輯任務</h4>
+                            <label
+                              htmlFor={`task-edit-${t.id}`}
+                              className="text-slate-400 hover:text-slate-700 cursor-pointer"
                             >
-                              <input type="hidden" name="task_id" value={t.id} />
-                              {projectIdFilter && <input type="hidden" name="project_id" value={projectIdFilter} />}
-                              <button type="submit" className="w-full text-red-600 hover:bg-red-50 py-2 rounded text-xs font-medium transition-colors">
-                                刪除任務
-                              </button>
-                            </ConfirmForm>
+                              ✕
+                            </label>
+                          </div>
+                          <form className="flex flex-col gap-3" action={updateTaskAction}>
+                            <input type="hidden" name="task_id" value={t.id} />
+                            <div className="grid grid-cols-2 gap-2">
+                              <input name="phase_name" defaultValue={t.phase_name} placeholder="階段" className="w-full p-2 border rounded text-xs" disabled={!canUpdate} />
+                              <input name="code" defaultValue={t.code ?? ""} placeholder="代碼" className="w-full p-2 border rounded text-xs" disabled={!canUpdate} />
+                            </div>
+                            <input name="name" defaultValue={t.name} placeholder="任務名稱" className="w-full p-2 border rounded text-xs" disabled={!canUpdate} />
+                            <div className="grid grid-cols-3 gap-2">
+                              <input name="seq" defaultValue={String(t.seq)} placeholder="序號" className="w-full p-2 border rounded text-xs" disabled={!canUpdate} />
+                              <input name="progress" defaultValue={String(t.progress)} placeholder="進度" className="w-full p-2 border rounded text-xs" disabled={!canUpdate} />
+                              <input name="duration_days" defaultValue={String(t.duration_days ?? 1)} placeholder="工期" className="w-full p-2 border rounded text-xs" disabled={!canUpdate} />
+                            </div>
+                            <input
+                              name="start_offset_days"
+                              defaultValue={String(t.start_offset_days ?? 0)}
+                              placeholder="開始偏移日"
+                              className="w-full p-2 border rounded text-xs"
+                              disabled={!canUpdate}
+                            />
+                            <select name="unit_id" defaultValue={t.unit_id} className="w-full p-2 border rounded text-xs" disabled={!canUpdate}>
+                              {(units ?? []).map((unit) => (
+                                <option key={unit.id} value={unit.id}>
+                                  {unit.name}
+                                </option>
+                              ))}
+                            </select>
+                            <select name="owner_unit_id" defaultValue={t.owner_unit_id ?? ""} className="w-full p-2 border rounded text-xs" disabled={!canUpdate}>
+                              <option value="">選擇部門</option>
+                              {(units ?? []).map((unit) => (
+                                <option key={unit.id} value={unit.id}>
+                                  {unit.name}
+                                </option>
+                              ))}
+                            </select>
+                            <div className="border-t border-slate-100 my-1"></div>
+                            <input name="completed_at" placeholder="完成時間 (YYYY/MM/DD HH:mm)" className="w-full p-2 border rounded text-xs" disabled={!canUpdate} />
+                            <input name="action" placeholder="動作紀錄" className="w-full p-2 border rounded text-xs" disabled={!canUpdate} />
+                            <input name="note" placeholder="備註" className="w-full p-2 border rounded text-xs" disabled={!canUpdate} />
+                            <button type="submit" className="w-full bg-slate-800 hover:bg-slate-900 text-white py-2 rounded text-xs font-medium" disabled={!canUpdate}>
+                              更新任務
+                            </button>
+                          </form>
+                          
+                          {(filesByTask[t.id] ?? []).length > 0 && (
+                            <div className="mt-4 pt-3 border-t border-slate-100">
+                              <h5 className="text-xs font-bold text-slate-500 mb-2">已上傳檔案</h5>
+                              {(filesByTask[t.id] ?? []).map((file) => {
+                                const thumbSrc = getThumbnailSrc(file);
+                                return (
+                                  <div className="flex items-center gap-2 mb-2 p-1.5 bg-slate-50 rounded border border-slate-100" key={file.id}>
+                                    {thumbSrc ? (
+                                      <img className="w-8 h-8 rounded object-cover" src={thumbSrc} alt={file.name} loading="lazy" />
+                                    ) : (
+                                      <div className="w-8 h-8 rounded bg-slate-200 flex items-center justify-center text-[10px] text-slate-500">FILE</div>
+                                    )}
+                                    <div className="flex-1 min-w-0">
+                                      <div className="text-xs font-medium truncate">{file.name}</div>
+                                      <a className="text-[10px] text-blue-500 hover:underline truncate block" href={file.web_view_link} target="_blank" rel="noreferrer">
+                                        開啟連結
+                                      </a>
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
+
+                          {canDelete && (
+                            <div className="mt-4 pt-3 border-t border-slate-100">
+                              <ConfirmForm
+                                className="w-full"
+                                action={deleteTaskAction}
+                                confirmMessage="確定要刪除此任務嗎？相關檔案也會一起刪除。"
+                              >
+                                <input type="hidden" name="task_id" value={t.id} />
+                                {projectIdFilter && <input type="hidden" name="project_id" value={projectIdFilter} />}
+                                <button type="submit" className="w-full text-red-600 hover:bg-red-50 py-2 rounded text-xs font-medium transition-colors">
+                                  刪除任務
+                                </button>
+                              </ConfirmForm>
+                            </div>
+                          )}
+                        </div>
+                      </div>
                     </div>
-                    )}
-                  </div>
-                    </details>
                   </td>
               </tr>
           ))}

@@ -1,8 +1,58 @@
-## Workspace boundary (critical)
-Only operate within /home/pdblueray/projects/outsource-track.
-Never use /mnt/c paths.
-If asked to choose /mnt/c folders, refuse and restate the WSL path.
+# AGENTS.md — Outsource-Track Agent Instructions
 
+## Workspace boundary (critical)
+- Only operate within: /home/pdblueray/projects/outsource-track
+- Never use /mnt/c paths.
+- If asked to choose /mnt/c folders, refuse and restate the WSL path.
+
+---
+
+## Mode switch (do NOT mix modes)
+- If the user says **「備份到 GitHub」** or **「push 到 GitHub」**:
+  - Enter **GitHub Backup Stage Gate** mode below and follow it strictly.
+- If the user says **「程式碼審查」** / **「Code Review」** / **「Review 整個 repo」**:
+  - Enter **Code Review Mode** below and follow it strictly.
+- Otherwise:
+  - Stay in normal assist mode: propose a plan, ask for commands/output only when needed.
+
+---
+
+# Code Review Mode (Codex Review / 可交接審查)
+
+## Review objectives (what to find)
+- Correctness: missing logic, edge cases, race conditions, timezone issues
+- Security: authN/authZ, cross-org/unit access, injection, secrets exposure, unsafe file access
+- Data integrity: constraints, migrations, RLS/ACL, orphan records, inconsistent writes
+- Reliability: error handling, retries, timeouts, logging/observability
+- Performance: N+1 queries, large payloads, unnecessary rerenders
+- Maintainability: duplication, dead code, unclear boundaries, inconsistent patterns
+- Delivery risk: “UI works but DB not updated”, “API exists but not used”, “two paths diverged”
+
+## Evidence requirement (must)
+For every finding include:
+- Evidence: file path + line range (or function name) + short snippet (no large pastes)
+- Risk: impact + likelihood
+- Fix: minimal patch first (then optional refactor)
+- Verification: exact command(s) to prove the fix
+
+## Output format (must)
+- Group by severity:
+  - P0 Critical (must-fix)
+  - P1 High
+  - P2 Medium
+  - P3 Low / Nice-to-have
+- End with:
+  - “Minimal PR plan” (smallest set of commits)
+  - “Test plan” (commands)
+  - “Rollback plan” (how to revert safely)
+
+## Guardrails
+- Default to read-only review. If changes are needed:
+  - propose change list + minimal PR plan first
+- Never request secrets, tokens, passwords, or private keys.
+- Avoid destructive operations unless explicitly instructed.
+
+---
 
 # Codex Template: Stage Gate — GitHub Backup (SSH, WSL)
 

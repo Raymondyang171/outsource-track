@@ -1,0 +1,27 @@
+# 進度紀錄
+
+## 0) 專案階段判定（依 repo 現況）
+- Phase 2A（Schema + RLS）已落地；Phase 2B（App 寫入與模組落地）已開始
+- 成本請款、協作請求、檔案索引等模組已有 migration + RLS/trigger
+- Web 端已有成本請款與成本類型管理介面，並已使用 RPC 寫入
+
+## 1) 已完成 / 已落地
+- Repo 治理：`CONTEXT.md`、`docs/db` 版本化、RLS smoke test 腳本
+- DB/RLS：
+  - Phase 2A migration + fix
+  - drive_items / assist_requests / cost_requests + cost_items + cost_attachments
+  - task_change_logs、platform-admin-rls
+- Web：
+  - 專案成本請款（/projects/[id]/costs）列表/詳情/新增
+  - 管理台：成本類型管理（/admin/cost-types）
+
+## 2) 待補 / 風險
+- Phase 2A RLS smoke test 尚未寫入可重跑證據（scripts/rls-smoke-test.mjs）
+- Phase 2B：所有寫入點需一致帶 org_id/unit_id 或由 server action 代寫
+- Admin/後台與一般使用者讀寫分離（service role vs anon）
+
+## 3) 下一步（建議順序）
+1. 補齊 RLS smoke test 證據到 docs/db/phase-2a-acceptance.md
+2. 盤點所有 INSERT/UPDATE/DELETE，統一寫入路徑
+3. 完成 Assist Requests 與 Cost Requests 的 UI 流程驗收
+4. 補齊 Dashboard 指標與查詢

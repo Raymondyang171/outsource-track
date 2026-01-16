@@ -1,5 +1,7 @@
 import { redirect } from "next/navigation";
 import { createServerSupabase } from "@/lib/supabase/server";
+import { createAdminSupabase } from "@/lib/supabase/admin";
+import { isPlatformAdminFromAccessToken } from "@/lib/auth";
 import DashboardClient from "@/components/dashboard/DashboardClient";
 import { createAssistRequest, updateAssistStatus } from "./actions";
 
@@ -32,6 +34,7 @@ type TaskRow = {
   start_offset_days: number;
   owner_unit_id: string | null;
   updated_at: string;
+  seq: number;
 };
 
 type LogRow = {
@@ -120,36 +123,53 @@ export default async function DashboardPage({
 
   const supabase = await createServerSupabase();
   const { data: authData } = await supabase.auth.getUser();
+  const { data: sessionData } = await supabase.auth.getSession();
   const user = authData.user;
 
   if (!user) {
     redirect("/login");
   }
 
-  const { data: mems } = await supabase
-    .from("memberships")
-    .select("org_id, unit_id, created_at")
-    .eq("user_id", user.id)
-    .order("created_at", { ascending: false })
-    .limit(1);
+  const isPlatformAdmin = isPlatformAdminFromAccessToken(sessionData.session?.access_token);
+  let dataClient = supabase;
+  if (isPlatformAdmin) {
+    try {
+      dataClient = createAdminSupabase();
+    } catch {
+      return <div className="page">缺少服務金鑰，無法載入平台資料。</div>;
+    }
+  }
 
-  const orgId = mems?.[0]?.org_id ?? null;
+  let orgId: string | null = null;
+  if (!isPlatformAdmin) {
+    const { data: mems } = await supabase
+      .from("memberships")
+      .select("org_id, unit_id, created_at")
+      .eq("user_id", user.id)
+      .order("created_at", { ascending: false })
+      .limit(1);
 
-  if (!orgId) {
+    orgId = mems?.[0]?.org_id ?? null;
+  }
+
+  if (!isPlatformAdmin && !orgId) {
     return <div className="page">尚未綁定公司，無法載入儀表板。</div>;
   }
 
-  const { data: units } = await supabase
-    .from("units")
-    .select("id, name")
-    .eq("org_id", orgId)
-    .order("name", { ascending: true });
+  let unitsQuery = dataClient.from("units").select("id, name").order("name", { ascending: true });
+  if (!isPlatformAdmin) {
+    unitsQuery = unitsQuery.eq("org_id", orgId);
+  }
+  const { data: units } = await unitsQuery;
 
-  const { data: projects } = await supabase
+  let projectsQuery = dataClient
     .from("projects")
     .select("id, name, start_date, status, unit_id, org_id")
-    .eq("org_id", orgId)
     .order("created_at", { ascending: false });
+  if (!isPlatformAdmin) {
+    projectsQuery = projectsQuery.eq("org_id", orgId);
+  }
+  const { data: projects } = await projectsQuery;
 
   const projectList = (projects ?? []) as ProjectRow[];
   const allProjectIds = projectList.map((project) => project.id);
@@ -159,10 +179,10 @@ export default async function DashboardPage({
   const selectedProjectId = projectIdFilter || filteredProjects[0]?.id || "";
 
   const { data: tasks } = allProjectIds.length
-    ? await supabase
+    ? await dataClient
         .from("project_tasks")
         .select(
-          "id, project_id, phase_name, code, name, progress, duration_days, start_offset_days, owner_unit_id, updated_at"
+          "id, project_id, phase_name, code, name, progress, duration_days, start_offset_days, owner_unit_id, updated_at, seq"
         )
         .in("project_id", allProjectIds)
         .order("seq", { ascending: true })
@@ -172,7 +192,7 @@ export default async function DashboardPage({
   const taskIds = taskRows.map((task) => task.id);
 
   const { data: logs } = taskIds.length
-    ? await supabase
+    ? await dataClient
         .from("progress_logs")
         .select("id, project_task_id, progress, note, created_at, user_id")
         .in("project_task_id", taskIds)
@@ -191,7 +211,7 @@ export default async function DashboardPage({
 
   let assistRows: AssistRow[] = [];
   if (allProjectIds.length > 0) {
-    const { data: assistData, error: assistErr } = await supabase
+    const { data: assistData, error: assistErr } = await dataClient
       .from("assist_requests")
       .select(
         "id, project_id, project_task_id, unit_id, to_unit_id, status, due_date, note, created_at, updated_at"
@@ -209,7 +229,7 @@ export default async function DashboardPage({
     .map((task) => task.id);
 
   const { data: driveItems } = selectedTaskIds.length
-    ? await supabase
+    ? await dataClient
         .from("drive_items")
         .select("id, project_task_id, name, web_view_link, thumbnail_link, mime_type")
         .in("project_task_id", selectedTaskIds)

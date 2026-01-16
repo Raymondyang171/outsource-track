@@ -3,6 +3,8 @@ import { createServerSupabase } from "@/lib/supabase/server";
 import { createAdminSupabase } from "@/lib/supabase/admin";
 import ConfirmForm from "@/components/confirm-form";
 import { checkPermission, getPermissionsForResource } from "@/lib/permissions";
+import { isPlatformAdminFromAccessToken } from "@/lib/auth";
+import { getLatestUserOrgId } from "@/lib/org";
 
 export const dynamic = "force-dynamic";
 
@@ -23,10 +25,12 @@ async function createUnitAction(formData: FormData) {
 
   const supabase = await createServerSupabase();
   const { data } = await supabase.auth.getUser();
+  const { data: sessionData } = await supabase.auth.getSession();
   const user = data.user;
   if (!user) {
     redirect("/login");
   }
+  const isPlatformAdmin = isPlatformAdminFromAccessToken(sessionData.session?.access_token);
 
   const name = String(formData.get("name") ?? "").trim();
   const formOrgId = String(formData.get("org_id") ?? "").trim();
@@ -34,7 +38,11 @@ async function createUnitAction(formData: FormData) {
     redirect(`/admin/units?error=${encodeMsg("department name and company are required")}`);
   }
   const adminClient = createAdminSupabase();
-  const allowed = await checkPermission(adminClient, user.id, formOrgId, "departments", "create");
+  const userOrgId = isPlatformAdmin ? null : await getLatestUserOrgId(adminClient, user.id);
+  if (!isPlatformAdmin && (!userOrgId || formOrgId !== userOrgId)) {
+    redirect(`/admin/units?error=${encodeMsg("permission_denied")}`);
+  }
+  const allowed = isPlatformAdmin || await checkPermission(adminClient, user.id, formOrgId, "departments", "create");
   if (!allowed) {
     redirect(`/admin/units?error=${encodeMsg("permission_denied")}`);
   }
@@ -50,10 +58,12 @@ async function updateUnitAction(formData: FormData) {
 
   const supabase = await createServerSupabase();
   const { data } = await supabase.auth.getUser();
+  const { data: sessionData } = await supabase.auth.getSession();
   const user = data.user;
   if (!user) {
     redirect("/login");
   }
+  const isPlatformAdmin = isPlatformAdminFromAccessToken(sessionData.session?.access_token);
 
   const unitId = String(formData.get("unit_id") ?? "").trim();
   const name = String(formData.get("name") ?? "").trim();
@@ -62,7 +72,11 @@ async function updateUnitAction(formData: FormData) {
     redirect(`/admin/units?error=${encodeMsg("department id, name, and company are required")}`);
   }
   const adminClient = createAdminSupabase();
-  const allowed = await checkPermission(adminClient, user.id, orgId, "departments", "update");
+  const userOrgId = isPlatformAdmin ? null : await getLatestUserOrgId(adminClient, user.id);
+  if (!isPlatformAdmin && (!userOrgId || orgId !== userOrgId)) {
+    redirect(`/admin/units?error=${encodeMsg("permission_denied")}`);
+  }
+  const allowed = isPlatformAdmin || await checkPermission(adminClient, user.id, orgId, "departments", "update");
   if (!allowed) {
     redirect(`/admin/units?error=${encodeMsg("permission_denied")}`);
   }
@@ -78,10 +92,12 @@ async function deleteUnitAction(formData: FormData) {
 
   const supabase = await createServerSupabase();
   const { data } = await supabase.auth.getUser();
+  const { data: sessionData } = await supabase.auth.getSession();
   const user = data.user;
   if (!user) {
     redirect("/login");
   }
+  const isPlatformAdmin = isPlatformAdminFromAccessToken(sessionData.session?.access_token);
 
   const unitId = String(formData.get("unit_id") ?? "").trim();
   if (!unitId) {
@@ -93,7 +109,11 @@ async function deleteUnitAction(formData: FormData) {
     .select("org_id")
     .eq("id", unitId)
     .maybeSingle();
-  const allowed = await checkPermission(adminClient, user.id, unitRow?.org_id ?? null, "departments", "delete");
+  const userOrgId = isPlatformAdmin ? null : await getLatestUserOrgId(adminClient, user.id);
+  if (!isPlatformAdmin && (!userOrgId || unitRow?.org_id !== userOrgId)) {
+    redirect(`/admin/units?error=${encodeMsg("permission_denied")}`);
+  }
+  const allowed = isPlatformAdmin || await checkPermission(adminClient, user.id, unitRow?.org_id ?? null, "departments", "delete");
   if (!allowed) {
     redirect(`/admin/units?error=${encodeMsg("permission_denied")}`);
   }
@@ -113,6 +133,7 @@ export default async function AdminUnitsPage({ searchParams }: PageProps) {
 
   const supabase = await createServerSupabase();
   const { data } = await supabase.auth.getUser();
+  const { data: sessionData } = await supabase.auth.getSession();
   const user = data.user;
 
   const missingKey = !process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -120,6 +141,7 @@ export default async function AdminUnitsPage({ searchParams }: PageProps) {
   if (!user) {
     redirect("/login");
   }
+  const isPlatformAdmin = isPlatformAdminFromAccessToken(sessionData.session?.access_token);
 
   let admin;
   try {
@@ -131,45 +153,43 @@ export default async function AdminUnitsPage({ searchParams }: PageProps) {
   if (missingKey || !admin) {
     return (
       <div className="admin-page">
-        Missing <code>SUPABASE_SERVICE_ROLE_KEY</code> in <code>.env.local</code>.
+        缺少 <code>SUPABASE_SERVICE_ROLE_KEY</code>，請在 <code>.env.local</code> 設定。
       </div>
     );
   }
 
-  const { data: myMems, error: myErr } = await admin
-    .from("memberships")
-    .select("org_id, created_at")
-    .eq("user_id", user.id)
-    .order("created_at", { ascending: false })
-    .limit(1);
+  const orgId = isPlatformAdmin ? null : await getLatestUserOrgId(admin, user.id);
 
-  if (myErr) {
-    return <div className="admin-page">membership lookup failed: {myErr.message}</div>;
+  if (!isPlatformAdmin && !orgId) {
+    return (
+      <div className="admin-page">
+        <h1>部門設定</h1>
+        <p className="admin-error">尚未綁定公司，請先建立成員關係。</p>
+      </div>
+    );
   }
 
-  const orgId = myMems?.[0]?.org_id ?? null;
-
   const orgQuery = admin.from("orgs").select("id, name");
-  const { data: orgs, error: orgErr } = orgId ? await orgQuery.eq("id", orgId) : await orgQuery;
+  const { data: orgs, error: orgErr } = isPlatformAdmin ? await orgQuery : await orgQuery.eq("id", orgId);
 
   const unitsQuery = admin
     .from("units")
     .select("id, name, created_at, org_id")
     .order("name", { ascending: true });
-  const { data: units, error } = orgId ? await unitsQuery.eq("org_id", orgId) : await unitsQuery;
+  const { data: units, error } = isPlatformAdmin ? await unitsQuery : await unitsQuery.eq("org_id", orgId);
 
   const orgNameById = Object.fromEntries((orgs ?? []).map((org) => [org.id, org.name]));
   const deptPerms = await getPermissionsForResource(admin, user.id, orgId, "departments");
-  const canRead = deptPerms.permissions?.read ?? false;
-  const canCreate = deptPerms.permissions?.create ?? false;
-  const canUpdate = deptPerms.permissions?.update ?? false;
-  const canDelete = deptPerms.permissions?.delete ?? false;
+  const canRead = isPlatformAdmin ? true : deptPerms.permissions?.read ?? false;
+  const canCreate = isPlatformAdmin ? true : deptPerms.permissions?.create ?? false;
+  const canUpdate = isPlatformAdmin ? true : deptPerms.permissions?.update ?? false;
+  const canDelete = isPlatformAdmin ? true : deptPerms.permissions?.delete ?? false;
 
   if (!canRead) {
     return (
       <div className="admin-page">
         <h1>部門設定</h1>
-        <p className="admin-error">目前角色沒有檢視權限。</p>
+        <p className="admin-error">目前權限不足，無法檢視。</p>
       </div>
     );
   }
@@ -177,7 +197,7 @@ export default async function AdminUnitsPage({ searchParams }: PageProps) {
   return (
     <div className="admin-page">
       <h1>部門設定</h1>
-      {!orgId && <p>尚未綁定公司，暫時顯示全部資料。</p>}
+      {!isPlatformAdmin && !orgId && <p>尚未綁定公司，請先建立成員關係。</p>}
       {okMsg && <p className="admin-success">{okMsg}</p>}
       {errorMsg && <p className="admin-error">{decodeURIComponent(errorMsg)}</p>}
       {orgErr && <p className="admin-error">{orgErr.message}</p>}

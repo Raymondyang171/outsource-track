@@ -3,12 +3,20 @@ import { createServerSupabase } from "@/lib/supabase/server";
 import { createAdminSupabase } from "@/lib/supabase/admin";
 import ConfirmForm from "@/components/confirm-form";
 import { checkPermission, getPermissionsForResource } from "@/lib/permissions";
+import { isPlatformAdminFromAccessToken } from "@/lib/auth";
+import { getLatestUserOrgId } from "@/lib/org";
 
 type PageProps = {
   searchParams?: Promise<Record<string, string | string[] | undefined>>;
 };
 
-const roleOptions = ["manager", "member", "viewer", "admin"];
+const baseRoleOptions = ["viewer", "member", "manager", "admin"];
+const roleRank: Record<string, number> = {
+  viewer: 0,
+  member: 1,
+  manager: 2,
+  admin: 3,
+};
 
 function getParam(value: string | string[] | undefined) {
   return Array.isArray(value) ? value[0] : value;
@@ -24,15 +32,41 @@ function emailToDisplayName(email: string | null | undefined) {
   return idx > 0 ? email.slice(0, idx) : email;
 }
 
+async function resolveBestRole(admin: any, userId: string, orgId?: string | null) {
+  let query = admin
+    .from("memberships")
+    .select("role, created_at")
+    .eq("user_id", userId)
+    .order("created_at", { ascending: false });
+  if (orgId) {
+    query = query.eq("org_id", orgId);
+  }
+  const { data } = await query;
+  let best: string | null = null;
+  let bestRank = -1;
+  (data ?? []).forEach((row: { role: string | null }) => {
+    const role = String(row.role ?? "").trim();
+    if (!role) return;
+    const rank = roleRank[role] ?? 0;
+    if (rank > bestRank) {
+      best = role;
+      bestRank = rank;
+    }
+  });
+  return best;
+}
+
 async function createUserAction(formData: FormData) {
   "use server";
 
   const supabase = await createServerSupabase();
   const { data } = await supabase.auth.getUser();
+  const { data: sessionData } = await supabase.auth.getSession();
   const authedUser = data.user;
   if (!authedUser) {
     redirect("/login");
   }
+  const isPlatformAdmin = isPlatformAdminFromAccessToken(sessionData.session?.access_token);
 
   const email = String(formData.get("email") ?? "").trim();
   const password = String(formData.get("password") ?? "").trim();
@@ -41,8 +75,8 @@ async function createUserAction(formData: FormData) {
   const unitId = String(formData.get("unit_id") ?? "").trim();
   const role = String(formData.get("role") ?? "").trim();
 
-  if (!email || !password || !displayName) {
-    redirect(`/admin/users?error=${encodeMsg("email, password, and display name are required")}`);
+  if (!email || !password || !displayName || !orgId || !unitId) {
+    redirect(`/admin/users?error=${encodeMsg("email, password, display name, org, and unit are required")}`);
   }
 
   let admin;
@@ -52,7 +86,17 @@ async function createUserAction(formData: FormData) {
     redirect(`/admin/users?error=${encodeMsg(e.message ?? "missing service role key")}`);
   }
 
-  const allowed = await checkPermission(admin, authedUser.id, null, "users", "create");
+  const userOrgId = isPlatformAdmin ? null : await getLatestUserOrgId(admin, authedUser.id);
+  if (!isPlatformAdmin) {
+    if (!userOrgId || !orgId || !unitId || orgId !== userOrgId) {
+      redirect(`/admin/users?error=${encodeMsg("permission_denied")}`);
+    }
+  }
+
+  const isAdminRole = isPlatformAdmin || (await resolveBestRole(admin, authedUser.id, userOrgId)) === "admin";
+  const resolvedRole = isAdminRole ? role : "member";
+
+  const allowed = isPlatformAdmin || await checkPermission(admin, authedUser.id, userOrgId, "users", "create");
   if (!allowed) {
     redirect(`/admin/users?error=${encodeMsg("permission_denied")}`);
   }
@@ -77,21 +121,15 @@ async function createUserAction(formData: FormData) {
     redirect(`/admin/users?error=${encodeMsg(`profile insert failed: ${profileErr.message}`)}`); 
   }
 
-  if (orgId || unitId || role) {
-    if (!orgId || !unitId) {
-      redirect(`/admin/users?error=${encodeMsg("org_id and unit_id are required for membership")}`);
-    }
+  const { error: memErr } = await admin.from("memberships").insert({
+    org_id: orgId,
+    unit_id: unitId,
+    user_id: userId,
+    role: resolvedRole || "member",
+  });
 
-    const { error: memErr } = await admin.from("memberships").insert({
-      org_id: orgId,
-      unit_id: unitId,
-      user_id: userId,
-      role: role || "member",
-    });
-
-    if (memErr) {
-      redirect(`/admin/users?error=${encodeMsg(`membership insert failed: ${memErr.message}`)}`);
-    }
+  if (memErr) {
+    redirect(`/admin/users?error=${encodeMsg(`membership insert failed: ${memErr.message}`)}`);
   }
 
   redirect(`/admin/users?ok=1`);
@@ -102,19 +140,19 @@ async function updateMembershipRoleAction(formData: FormData) {
 
   const supabase = await createServerSupabase();
   const { data } = await supabase.auth.getUser();
+  const { data: sessionData } = await supabase.auth.getSession();
   const authedUser = data.user;
   if (!authedUser) {
     redirect("/login");
   }
+  const isPlatformAdmin = isPlatformAdminFromAccessToken(sessionData.session?.access_token);
 
   const orgId = String(formData.get("org_id") ?? "").trim();
   const currentUnitId = String(formData.get("current_unit_id") ?? "").trim();
-  const unitId = String(formData.get("unit_id") ?? "").trim();
   const userId = String(formData.get("user_id") ?? "").trim();
   const role = String(formData.get("role") ?? "").trim();
-  const displayName = String(formData.get("display_name") ?? "").trim();
 
-  if (!orgId || !currentUnitId || !unitId || !userId || !role) {
+  if (!orgId || !currentUnitId || !userId || !role) {
     redirect(`/admin/users?error=${encodeMsg("missing membership fields")}`);
   }
 
@@ -125,21 +163,19 @@ async function updateMembershipRoleAction(formData: FormData) {
     redirect(`/admin/users?error=${encodeMsg(e.message ?? "missing service role key")}`);
   }
 
-  const canUpdateMemberships = await checkPermission(admin, authedUser.id, orgId, "memberships", "update");
-  if (!canUpdateMemberships) {
+  const userOrgId = isPlatformAdmin ? null : await getLatestUserOrgId(admin, authedUser.id);
+  if (!isPlatformAdmin && (!userOrgId || orgId !== userOrgId)) {
     redirect(`/admin/users?error=${encodeMsg("permission_denied")}`);
   }
 
-  const canUpdateUsers = await checkPermission(admin, authedUser.id, orgId, "users", "update");
-  if (displayName && canUpdateUsers) {
-    await admin
-      .from("profiles")
-      .upsert({ user_id: userId, display_name: displayName }, { onConflict: "user_id" });
+  const isAdminRole = isPlatformAdmin || (await resolveBestRole(admin, authedUser.id, userOrgId)) === "admin";
+  if (!isAdminRole) {
+    redirect(`/admin/users?error=${encodeMsg("permission_denied")}`);
   }
 
   const { error } = await admin
     .from("memberships")
-    .update({ role, unit_id: unitId })
+    .update({ role })
     .eq("org_id", orgId)
     .eq("unit_id", currentUnitId)
     .eq("user_id", userId);
@@ -156,10 +192,12 @@ async function deleteMembershipAction(formData: FormData) {
 
   const supabase = await createServerSupabase();
   const { data } = await supabase.auth.getUser();
+  const { data: sessionData } = await supabase.auth.getSession();
   const authedUser = data.user;
   if (!authedUser) {
     redirect("/login");
   }
+  const isPlatformAdmin = isPlatformAdminFromAccessToken(sessionData.session?.access_token);
 
   const orgId = String(formData.get("org_id") ?? "").trim();
   const unitId = String(formData.get("unit_id") ?? "").trim();
@@ -176,7 +214,12 @@ async function deleteMembershipAction(formData: FormData) {
     redirect(`/admin/users?error=${encodeMsg(e.message ?? "missing service role key")}`);
   }
 
-  const allowed = await checkPermission(admin, authedUser.id, orgId, "memberships", "delete");
+  const userOrgId = isPlatformAdmin ? null : await getLatestUserOrgId(admin, authedUser.id);
+  if (!isPlatformAdmin && (!userOrgId || orgId !== userOrgId)) {
+    redirect(`/admin/users?error=${encodeMsg("permission_denied")}`);
+  }
+
+  const allowed = isPlatformAdmin || await checkPermission(admin, authedUser.id, orgId, "memberships", "delete");
   if (!allowed) {
     redirect(`/admin/users?error=${encodeMsg("permission_denied")}`);
   }
@@ -195,10 +238,71 @@ async function deleteMembershipAction(formData: FormData) {
   redirect(`/admin/users?ok=membership_deleted`);
 }
 
+async function updateMembershipAction(formData: FormData) {
+  "use server";
+
+  const supabase = await createServerSupabase();
+  const { data } = await supabase.auth.getUser();
+  const { data: sessionData } = await supabase.auth.getSession();
+  const authedUser = data.user;
+  if (!authedUser) {
+    redirect("/login");
+  }
+  const isPlatformAdmin = isPlatformAdminFromAccessToken(sessionData.session?.access_token);
+
+  const orgId = String(formData.get("org_id") ?? "").trim();
+  const currentUnitId = String(formData.get("current_unit_id") ?? "").trim();
+  const unitId = String(formData.get("unit_id") ?? "").trim();
+  const userId = String(formData.get("user_id") ?? "").trim();
+  const displayName = String(formData.get("display_name") ?? "").trim();
+
+  if (!orgId || !currentUnitId || !unitId || !userId) {
+    redirect(`/admin/users?error=${encodeMsg("missing membership fields")}`);
+  }
+
+  let admin;
+  try {
+    admin = createAdminSupabase();
+  } catch (e: any) {
+    redirect(`/admin/users?error=${encodeMsg(e.message ?? "missing service role key")}`);
+  }
+
+  const userOrgId = isPlatformAdmin ? null : await getLatestUserOrgId(admin, authedUser.id);
+  if (!isPlatformAdmin && (!userOrgId || orgId !== userOrgId)) {
+    redirect(`/admin/users?error=${encodeMsg("permission_denied")}`);
+  }
+
+  const canUpdateMemberships = isPlatformAdmin || await checkPermission(admin, authedUser.id, orgId, "memberships", "update");
+  if (!canUpdateMemberships) {
+    redirect(`/admin/users?error=${encodeMsg("permission_denied")}`);
+  }
+
+  const canUpdateUsers = isPlatformAdmin || await checkPermission(admin, authedUser.id, orgId, "users", "update");
+  if (displayName && canUpdateUsers) {
+    await admin
+      .from("profiles")
+      .upsert({ user_id: userId, display_name: displayName }, { onConflict: "user_id" });
+  }
+
+  const { error } = await admin
+    .from("memberships")
+    .update({ unit_id: unitId })
+    .eq("org_id", orgId)
+    .eq("unit_id", currentUnitId)
+    .eq("user_id", userId);
+
+  if (error) {
+    redirect(`/admin/users?error=${encodeMsg(`membership update failed: ${error.message}`)}`);
+  }
+
+  redirect(`/admin/users?ok=membership_updated`);
+}
+
 export default async function AdminUsersPage({ searchParams }: PageProps) {
   const sp = await searchParams;
   const ok = getParam(sp?.ok);
   const error = getParam(sp?.error);
+  const selectedOrgId = getParam(sp?.org_id);
   const okMsg =
     ok === "1"
       ? "已建立使用者。"
@@ -210,6 +314,7 @@ export default async function AdminUsersPage({ searchParams }: PageProps) {
 
   const supabase = await createServerSupabase();
   const { data } = await supabase.auth.getUser();
+  const { data: sessionData } = await supabase.auth.getSession();
   const user = data.user;
 
   const missingKey = !process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -217,6 +322,7 @@ export default async function AdminUsersPage({ searchParams }: PageProps) {
   if (!user) {
     redirect("/login");
   }
+  const isPlatformAdmin = isPlatformAdminFromAccessToken(sessionData.session?.access_token);
 
   let listClient = supabase;
   if (!missingKey) {
@@ -238,24 +344,88 @@ export default async function AdminUsersPage({ searchParams }: PageProps) {
   let membershipsError: string | null = null;
   let orgOptions: Array<{ id: string; name: string }> = [];
   let unitOptions: Array<{ id: string; name: string }> = [];
-  let taskOptions: Array<{ id: string; label: string }> = [];
   let orgNameById: Record<string, string> = {};
   let unitNameById: Record<string, string> = {};
   let userNameById: Record<string, string> = {};
   let userEmailById: Record<string, string> = {};
+  let userRole: string | null = null;
   let canReadUsers = true;
   let canCreateUsers = false;
   let canUpdateMemberships = false;
+  let canEditRoles = false;
   let canDeleteMemberships = false;
+  let roleOptions = [...baseRoleOptions];
 
   if (user) {
+    if (isPlatformAdmin) {
+      orgId = selectedOrgId ?? null;
+      if (!orgId) {
+        membershipsError = "no_org_selected";
+      }
+    } else {
+      const { data: myMems, error: myErr } = await listClient
+        .from("memberships")
+        .select("org_id, created_at")
+        .eq("user_id", user.id)
+        .order("created_at", { ascending: false })
+        .limit(1);
+
+      if (myErr) {
+        membershipsError = `membership lookup failed: ${myErr.message}`;
+      } else if (!myMems || myMems.length === 0) {
+        membershipsError = "no_org_membership";
+      } else {
+        orgId = myMems[0].org_id;
+      }
+    }
+
     if (!missingKey) {
       try {
         const admin = createAdminSupabase();
-        const { data: listRes } = await admin.auth.admin.listUsers({ perPage: 1000 });
-        const users = listRes?.users ?? [];
-        const userIds = users.map((u) => u.id);
-        userEmailById = Object.fromEntries(users.map((u) => [u.id, u.email ?? ""]));
+        let userIds: string[] = [];
+
+        if (isPlatformAdmin) {
+          if (orgId) {
+            const { data: memRows } = await admin
+              .from("memberships")
+              .select("user_id")
+              .eq("org_id", orgId);
+            userIds = (memRows ?? []).map((m) => m.user_id);
+            const userInfos = await Promise.all(
+              userIds.map(async (id) => {
+                try {
+                  const { data } = await admin.auth.admin.getUserById(id);
+                  return { id, email: data.user?.email ?? "" };
+                } catch {
+                  return { id, email: "" };
+                }
+              })
+            );
+            userEmailById = Object.fromEntries(userInfos.map((u) => [u.id, u.email]));
+          }
+        } else {
+          const { data: listRes } = await admin.auth.admin.listUsers({ perPage: 1000 });
+          const users = listRes?.users ?? [];
+          const allUserIds = users.map((u) => u.id);
+          userIds = allUserIds;
+
+          if (orgId) {
+            const { data: memRows } = await admin
+              .from("memberships")
+              .select("user_id")
+              .eq("org_id", orgId);
+            const allowedIds = new Set((memRows ?? []).map((m) => m.user_id));
+            userIds = users.filter((u) => allowedIds.has(u.id)).map((u) => u.id);
+          } else {
+            userIds = [];
+          }
+
+          const usersById = new Map(users.map((u) => [u.id, u]));
+          userEmailById = Object.fromEntries(
+            userIds.map((id) => [id, usersById.get(id)?.email ?? ""])
+          );
+        }
+
         if (userIds.length > 0) {
           const { data: profileList } = await admin
             .from("profiles")
@@ -264,19 +434,19 @@ export default async function AdminUsersPage({ searchParams }: PageProps) {
 
           const displayById = new Map((profileList ?? []).map((p) => [p.user_id, p.display_name]));
           userNameById = Object.fromEntries(
-            users.map((u) => [
-              u.id,
-              (displayById.get(u.id) ?? "").trim() || emailToDisplayName(u.email),
+            userIds.map((id) => [
+              id,
+              (displayById.get(id) ?? "").trim() || emailToDisplayName(userEmailById[id]),
             ])
           );
-          const missing = users
-            .filter((u) => {
-              const d = displayById.get(u.id);
+          const missing = userIds
+            .filter((id) => {
+              const d = displayById.get(id);
               return !d || !String(d).trim();
             })
-            .map((u) => ({
-              user_id: u.id,
-              display_name: emailToDisplayName(u.email),
+            .map((id) => ({
+              user_id: id,
+              display_name: emailToDisplayName(userEmailById[id]),
             }));
 
           if (missing.length > 0) {
@@ -288,26 +458,12 @@ export default async function AdminUsersPage({ searchParams }: PageProps) {
       }
     }
 
-    const { data: myMems, error: myErr } = await listClient
-      .from("memberships")
-      .select("org_id, created_at")
-      .eq("user_id", user.id)
-      .order("created_at", { ascending: false })
-      .limit(1);
-
-    if (myErr) {
-      membershipsError = `membership lookup failed: ${myErr.message}`;
-    } else if (!myMems || myMems.length === 0) {
-      membershipsError = "no_org_membership";
-    } else {
-      orgId = myMems[0].org_id;
-    }
-
     if (!missingKey) {
       try {
         const permClient = createAdminSupabase();
         const userPerms = await getPermissionsForResource(permClient, user.id, orgId, "users");
         const membershipPerms = await getPermissionsForResource(permClient, user.id, orgId, "memberships");
+        userRole = userPerms.role ?? null;
         canReadUsers = userPerms.permissions?.read ?? false;
         canCreateUsers = userPerms.permissions?.create ?? false;
         canUpdateMemberships = membershipPerms.permissions?.update ?? false;
@@ -316,21 +472,46 @@ export default async function AdminUsersPage({ searchParams }: PageProps) {
         // ignore permission lookup failures
       }
     }
+    if (isPlatformAdmin) {
+      canReadUsers = true;
+      canCreateUsers = true;
+      canUpdateMemberships = true;
+      canDeleteMemberships = true;
+      userRole = "admin";
+    }
+    canEditRoles = isPlatformAdmin || userRole === "admin";
+
+    if (!missingKey) {
+      try {
+        const admin = createAdminSupabase();
+        const { data: roleRows } = await admin
+          .from("role_permissions")
+          .select("role");
+        const roleSet = new Set(baseRoleOptions);
+        (roleRows ?? []).forEach((row) => row.role && roleSet.add(row.role));
+        roleOptions = [...roleSet];
+      } catch {
+        roleOptions = [...baseRoleOptions];
+      }
+    }
+
+    const { data: orgList, error: orgErr } = await listClient
+      .from("orgs")
+      .select("id, name");
+
+    if (orgErr) {
+      membershipsError = orgErr.message;
+    } else {
+      orgOptions = isPlatformAdmin ? orgList ?? [] : orgId ? (orgList ?? []).filter((o) => o.id === orgId) : [];
+      orgNameById = Object.fromEntries((orgList ?? []).map((o) => [o.id, o.name]));
+    }
 
     if (!membershipsError) {
-      const { data: orgList, error: orgErr } = await listClient
-        .from("orgs")
-        .select("id, name");
-
-      if (orgErr) {
-        membershipsError = orgErr.message;
-      } else {
-        orgOptions = orgId ? (orgList ?? []).filter((o) => o.id === orgId) : orgList ?? [];
-        orgNameById = Object.fromEntries((orgList ?? []).map((o) => [o.id, o.name]));
-      }
 
       const unitsQuery = listClient.from("units").select("id, name, org_id").order("name", { ascending: true });
-      const { data: unitList, error: unitErr } = orgId ? await unitsQuery.eq("org_id", orgId) : await unitsQuery;
+      const { data: unitList, error: unitErr } = orgId
+        ? await unitsQuery.eq("org_id", orgId)
+        : await unitsQuery.eq("org_id", "00000000-0000-0000-0000-000000000000");
 
       if (unitErr) {
         membershipsError = unitErr.message;
@@ -341,24 +522,6 @@ export default async function AdminUsersPage({ searchParams }: PageProps) {
             name: orgId ? u.name : `${orgNameById[u.org_id] ?? "未知組織"} / ${u.name}`,
           })) ?? [];
         unitNameById = Object.fromEntries((unitList ?? []).map((u) => [u.id, u.name]));
-      }
-
-      if (orgId) {
-        const { data: taskList, error: taskErr } = await listClient
-          .from("project_tasks")
-          .select("id, seq, phase_name, code, name")
-          .eq("org_id", orgId)
-          .order("seq", { ascending: true });
-
-        if (taskErr) {
-          membershipsError = taskErr.message;
-        } else {
-          taskOptions =
-            taskList?.map((t) => ({
-              id: t.id,
-              label: `${t.phase_name} ${t.code ? `[${t.code}] ` : ""}${t.name}`.trim(),
-            })) ?? [];
-        }
       }
 
       if (orgId) {
@@ -394,7 +557,7 @@ export default async function AdminUsersPage({ searchParams }: PageProps) {
     return (
       <div className="admin-page">
         <h1>使用者管理</h1>
-        <p className="admin-error">目前角色沒有檢視權限。</p>
+        <p className="admin-error">目前權限不足，無法檢視。</p>
       </div>
     );
   }
@@ -411,6 +574,27 @@ export default async function AdminUsersPage({ searchParams }: PageProps) {
 
       {okMsg && <p className="admin-success">{okMsg}</p>}
       {error && <p className="admin-error">{decodeURIComponent(error)}</p>}
+      {isPlatformAdmin && (
+        <form method="get" className="admin-form-grid" style={{ marginTop: 12 }}>
+          <div className="admin-field">
+            <label htmlFor="org_id_filter">公司</label>
+            <select id="org_id_filter" name="org_id" defaultValue={orgId ?? ""}>
+              <option value="">請選擇公司</option>
+              {orgOptions.map((org) => (
+                <option key={org.id} value={org.id}>
+                  {org.name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="admin-field" style={{ alignSelf: "end" }}>
+            <button type="submit">載入成員</button>
+          </div>
+        </form>
+      )}
+      {membershipsError === "no_org_selected" && (
+        <p className="admin-error">請先選擇公司後再載入成員列表。</p>
+      )}
 
       {user && !missingKey && canCreateUsers && (
         <form action={createUserAction} className="admin-form-grid" autoComplete="off">
@@ -438,9 +622,8 @@ export default async function AdminUsersPage({ searchParams }: PageProps) {
             </select>
           </div>
           <div className="admin-field">
-            <label htmlFor="unit_id">部門（選填）</label>
+            <label htmlFor="unit_id">部門</label>
             <select id="unit_id" name="unit_id" defaultValue="">
-              <option value="">略過</option>
               {unitOptions.map((unit) => (
                 <option key={unit.id} value={unit.id}>
                   {unit.name}
@@ -448,28 +631,19 @@ export default async function AdminUsersPage({ searchParams }: PageProps) {
               ))}
             </select>
           </div>
-          <div className="admin-field">
-            <label htmlFor="task_id">任務（選填）</label>
-            <select id="task_id" name="task_id" defaultValue="">
-              <option value="">略過</option>
-              {taskOptions.map((task) => (
-                <option key={task.id} value={task.id}>
-                  {task.label}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div className="admin-field">
-            <label htmlFor="role">角色（選填）</label>
-            <select id="role" name="role" defaultValue="">
-              <option value="">略過</option>
-              {roleOptions.map((role) => (
-                <option key={role} value={role}>
-                  {role}
-                </option>
-              ))}
-            </select>
-          </div>
+          {canEditRoles && (
+            <div className="admin-field">
+              <label htmlFor="role">權限（選填）</label>
+              <select id="role" name="role" defaultValue="">
+                <option value="">略過</option>
+                {roleOptions.map((role) => (
+                  <option key={role} value={role}>
+                    {role}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
           <button type="submit">建立使用者</button>
         </form>
       )}
@@ -478,7 +652,7 @@ export default async function AdminUsersPage({ searchParams }: PageProps) {
         <div className="admin-section">
           <h2>使用者權限</h2>
 
-          {!orgId && !membershipsError && (
+          {!orgId && !membershipsError && !isPlatformAdmin && (
             <p>尚未綁定公司，請先建立成員關係。</p>
           )}
           {membershipsError && <p className="admin-error">{membershipsError}</p>}
@@ -491,7 +665,7 @@ export default async function AdminUsersPage({ searchParams }: PageProps) {
                   <th>使用者</th>
                   <th>電子郵件</th>
                   <th>部門</th>
-                  <th>角色</th>
+                  <th>權限</th>
                   <th>建立時間</th>
                 </tr>
               </thead>
@@ -524,25 +698,29 @@ export default async function AdminUsersPage({ searchParams }: PageProps) {
                       </select>
                     </td>
                     <td>
-                      <select
-                        name="role"
-                        defaultValue={m.role}
-                        className="admin-inline-select"
-                        form={`mem-${m.user_id}-${m.unit_id}`}
-                        disabled={!canUpdateMemberships}
-                      >
-                        {roleOptions.map((role) => (
-                          <option key={role} value={role}>
-                            {role}
-                          </option>
-                        ))}
-                      </select>
+                      {canEditRoles ? (
+                        <form className="admin-inline-actions" action={updateMembershipRoleAction}>
+                          <input type="hidden" name="org_id" value={m.org_id} />
+                          <input type="hidden" name="current_unit_id" value={m.unit_id} />
+                          <input type="hidden" name="user_id" value={m.user_id} />
+                          <select name="role" defaultValue={m.role} className="admin-inline-select">
+                            {roleOptions.map((role) => (
+                              <option key={role} value={role}>
+                                {role}
+                              </option>
+                            ))}
+                          </select>
+                          <button type="submit">修改權限</button>
+                        </form>
+                      ) : (
+                        <div className="admin-inline-meta">{m.role}</div>
+                      )}
                     </td>
                     <td>
                       <div className="admin-inline-meta">{new Date(m.created_at).toLocaleString()}</div>
                       <ConfirmForm
                         id={`mem-${m.user_id}-${m.unit_id}`}
-                        action={updateMembershipRoleAction}
+                        action={updateMembershipAction}
                         confirmMessage="確定要更新成員資訊？"
                         className="admin-inline-actions"
                       >

@@ -1,9 +1,8 @@
-// proxy.ts (project root, Next.js 16.1+)
 import { type NextRequest } from "next/server";
 import { updateSession } from "./utils/supabase/updateSession";
 
 export async function proxy(request: NextRequest) {
-  return await updateSession(request);
+  return updateSession(request);
 }
 
 export const config = {

@@ -2,8 +2,9 @@
 
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
-import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
-import { createProjectTask, updateTaskProgress, updateTaskSchedule } from "./actions";
+import Link from "next/link";
+import { Button } from "@/components/ui/button";
+import { createProjectTask, getTaskLogs, updateTaskAssignees, updateTaskProgress, updateTaskSchedule } from "./actions";
 
 type Project = {
   id: string;
@@ -27,6 +28,7 @@ type Task = {
   duration_days: number;
   start_offset_days: number;
   owner_unit_id: string | null;
+  owner_user_id: string | null;
   parent_id?: string | null;
   level?: number;
   status?: TaskStatus;
@@ -62,54 +64,15 @@ type Props = {
   tasks: Task[];
   role: string | null;
   driveItems: DriveItem[];
+  units: Array<{ id: string; name: string }>;
+  members: Array<{
+    user_id: string;
+    unit_id: string;
+    role: string | null;
+    display_name: string | null;
+  }>;
+  initialTab?: string;
 };
-
-const tabs = [
-  { id: "dashboard", label: "儀表板" },
-  { id: "board", label: "Board" },
-  { id: "timeline", label: "Timeline" },
-  { id: "files", label: "Files" },
-  { id: "settings", label: "Settings" },
-];
-
-const mockTasks: Task[] = [
-  {
-    id: "mock-1",
-    seq: 1,
-    phase_name: "立項",
-    code: "1.1",
-    name: "需求評估與分析",
-    progress: 20,
-    duration_days: 6,
-    start_offset_days: 0,
-    owner_unit_id: null,
-    status: "ready",
-  },
-  {
-    id: "mock-2",
-    seq: 2,
-    phase_name: "設計",
-    code: "2.1",
-    name: "設計圖紙製作",
-    progress: 45,
-    duration_days: 10,
-    start_offset_days: 6,
-    owner_unit_id: null,
-    status: "in_progress",
-  },
-  {
-    id: "mock-3",
-    seq: 3,
-    phase_name: "施工",
-    code: "3.1",
-    name: "備料與進場",
-    progress: 0,
-    duration_days: 4,
-    start_offset_days: 16,
-    owner_unit_id: null,
-    status: "ready",
-  },
-];
 
 function groupDriveItems(items: DriveItem[]) {
   const grouped: Record<string, FileItem[]> = {};
@@ -135,9 +98,25 @@ function getThumbnailSrc(file: FileItem) {
   return `/api/drive/thumbnail?item_id=${encodeURIComponent(file.id)}`;
 }
 
-export default function ProjectWorkspace({ project, tasks, role, driveItems }: Props) {
+export default function ProjectWorkspace({
+  project,
+  tasks,
+  role,
+  driveItems,
+  units,
+  members,
+  initialTab,
+}: Props) {
   const isViewer = role === "viewer";
-  const [activeTab, setActiveTab] = useState("dashboard");
+  const tabs = [
+    { id: "dashboard", label: "儀表板" },
+    { id: "board", label: "看板" },
+    { id: "timeline", label: "時間軸" },
+    { id: "files", label: "檔案" },
+    { id: "settings", label: "設定" },
+    { id: "costs", label: "費用", href: `/projects/${project.id}/costs` },
+  ];
+  const [activeTab, setActiveTab] = useState(initialTab ?? "dashboard");
   const [panelOpen, setPanelOpen] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [progress, setProgress] = useState(0);
@@ -153,12 +132,15 @@ export default function ProjectWorkspace({ project, tasks, role, driveItems }: P
   const [subtaskStartIndex, setSubtaskStartIndex] = useState(0);
   const [subtaskDuration, setSubtaskDuration] = useState(2);
   const [subtaskMsg, setSubtaskMsg] = useState("");
+  const [assigneeUnitId, setAssigneeUnitId] = useState("");
+  const [assigneeUserId, setAssigneeUserId] = useState("");
+  const [assigneeMsg, setAssigneeMsg] = useState("");
   const [flagsByTask, setFlagsByTask] = useState<Record<string, TaskFlag[]>>({});
   const [flagManager, setFlagManager] = useState<{ open: boolean; taskId: string | null }>({
     open: false,
     taskId: null,
   });
-  const [notesByTask, setNotesByTask] = useState<Record<string, string>>({});
+  const [thumbReady, setThumbReady] = useState<Record<string, boolean>>({});
   const [flagMenu, setFlagMenu] = useState<{
     taskId: string;
     x: number;
@@ -171,6 +153,56 @@ export default function ProjectWorkspace({ project, tasks, role, driveItems }: P
   const [collapsedIds, setCollapsedIds] = useState<Set<string>>(() => new Set());
   const [isPending, startTransition] = useTransition();
   const [isCreating, startCreate] = useTransition();
+
+  const sendLog = (payload: Record<string, any>) => {
+    try {
+      const body = JSON.stringify(payload);
+      if (typeof navigator !== "undefined" && navigator.sendBeacon) {
+        const blob = new Blob([body], { type: "application/json" });
+        navigator.sendBeacon("/api/logs", blob);
+        return;
+      }
+      void fetch("/api/logs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body,
+        keepalive: true,
+      });
+    } catch {
+      // ignore logging failures
+    }
+  };
+
+  const unitNameById = useMemo(() => {
+    return Object.fromEntries(units.map((unit) => [unit.id, unit.name]));
+  }, [units]);
+
+  const memberOptions = useMemo(() => {
+    return members
+      .map((member) => {
+        const unitName = unitNameById[member.unit_id] ?? "未指派部門";
+        const label = member.display_name
+          ? `${member.display_name}（${unitName}）`
+          : `${member.user_id.slice(0, 8)}（${unitName}）`;
+        return {
+          ...member,
+          label,
+        };
+      })
+      .sort((a, b) => a.label.localeCompare(b.label, "zh-Hant"));
+  }, [members, unitNameById]);
+
+  const handleExportReport = () => {
+    sendLog({
+      level: "info",
+      message: "export_project_report",
+      action: "export",
+      resource: "project_report",
+      record_id: project.id,
+      source: "client",
+      meta: { project_name: project.name },
+    });
+  };
 
   function resolveStatus(task: Task): TaskStatus {
     if (task.status) return task.status;
@@ -188,20 +220,28 @@ export default function ProjectWorkspace({ project, tasks, role, driveItems }: P
       status: resolveStatus(task),
       parent_id: task.parent_id ?? null,
       level: task.level ?? 0,
+      owner_unit_id: task.owner_unit_id ?? null,
+      owner_user_id: task.owner_user_id ?? null,
     };
   }
 
-  const initialTasks =
-    tasks.length > 0
-      ? tasks.map((task) => normalizeTask(task))
-      : mockTasks;
+  const [isLogPending, startLogTransition] = useTransition();
+
+  const initialTasks = tasks.length > 0 ? tasks.map((task) => normalizeTask(task)) : [];
   const [localTasks, setLocalTasks] = useState<Task[]>(initialTasks);
   const [filesByTask, setFilesByTask] = useState<Record<string, FileItem[]>>(
     () => groupDriveItems(driveItems)
   );
-  const [logsByTask, setLogsByTask] = useState<
-    Record<string, Array<{ time: string; note: string; progress: number }>>
-  >({});
+
+  type ActivityLog = {
+    id: string;
+    time: string;
+    note: string | null;
+    progress: number;
+    user_name: string;
+  };
+
+  const [activityLogs, setActivityLogs] = useState<ActivityLog[]>([]);
   const tasksRef = useRef<Task[]>(localTasks);
 
   useEffect(() => {
@@ -212,6 +252,11 @@ export default function ProjectWorkspace({ project, tasks, role, driveItems }: P
     if (!tasks.length) return;
     setLocalTasks(tasks.map((task) => normalizeTask(task)));
   }, [tasks]);
+
+  useEffect(() => {
+    if (!initialTab) return;
+    setActiveTab(initialTab);
+  }, [initialTab]);
 
   const selectedTask = localTasks.find((task) => task.id === selectedId) ?? null;
 
@@ -232,12 +277,22 @@ export default function ProjectWorkspace({ project, tasks, role, driveItems }: P
     setSubtaskMsg("");
     setNote("");
     setMessage("");
+    setActivityLogs([]);
+
+    startLogTransition(async () => {
+      // Defer fetching logs
+      const res = await getTaskLogs(selectedTask.id);
+      if (res.ok) {
+        setActivityLogs(res.logs ?? []);
+      }
+    });
   }, [selectedTask]);
 
   const { phaseEntries, childCount } = useMemo(() => {
     const rootsByPhase = new Map<string, Task[]>();
     const byParent = new Map<string, Task[]>();
     const childCounter = new Map<string, number>();
+
 
     localTasks.forEach((task) => {
       if (task.parent_id) {
@@ -273,6 +328,32 @@ export default function ProjectWorkspace({ project, tasks, role, driveItems }: P
 
     return { phaseEntries: result, childCount: childCounter };
   }, [localTasks, collapsedIds]);
+
+  const boardEntries = useMemo(() => {
+    const columns: Array<{ id: TaskStatus; label: string }> = [
+      { id: "ready", label: "待辦事項" },
+      { id: "in_progress", label: "進行中" },
+      { id: "completed", label: "完成" },
+      { id: "error", label: "異常" },
+    ];
+    const buckets: Record<TaskStatus, Task[]> = {
+      ready: [],
+      in_progress: [],
+      completed: [],
+      error: [],
+    };
+    localTasks
+      .slice()
+      .sort((a, b) => a.seq - b.seq)
+      .forEach((task) => {
+        const status = getTaskStatus(task);
+        buckets[status].push(task);
+      });
+
+    return columns
+      .filter((column) => column.id !== "error" || buckets.error.length > 0)
+      .map((column) => [column, buckets[column.id]] as const);
+  }, [localTasks]);
 
   const totalTasks = localTasks.length;
   const completed = localTasks.filter((t) => t.progress >= 100).length;
@@ -340,7 +421,25 @@ export default function ProjectWorkspace({ project, tasks, role, driveItems }: P
 
   function formatDate(date: Date) {
     const local = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
-    return local.toISOString().slice(0, 10);
+    return local.toISOString().slice(0, 10).replaceAll("-", "/");
+  }
+
+  function formatDateString(value: string | null | undefined) {
+    if (!value) return "-";
+    const dateOnly = value.includes("T") ? value.split("T")[0] : value;
+    return dateOnly.replaceAll("-", "/");
+  }
+
+  function formatStatus(value: string | null | undefined) {
+    if (!value) return "進行中";
+    const map: Record<string, string> = {
+      active: "進行中",
+      planning: "規劃中",
+      paused: "暫停",
+      done: "已完成",
+      archived: "已封存",
+    };
+    return map[value] ?? value;
   }
 
   function getTaskStartDate(task: Task) {
@@ -369,7 +468,7 @@ export default function ProjectWorkspace({ project, tasks, role, driveItems }: P
   function beginDrag(
     task: Task,
     type: "move" | "resize-left" | "resize-right",
-    event: ReactPointerEvent<HTMLDivElement>
+    event: ReactPointerEvent<HTMLElement>
   ) {
     if (isViewer) return;
     if (event.button !== 0) return;
@@ -392,6 +491,7 @@ export default function ProjectWorkspace({ project, tasks, role, driveItems }: P
     const dragThreshold = 10;
 
     function onMove(event: PointerEvent) {
+      if (!dragState) return;
       if (dragState.pointerId !== null && event.pointerId !== dragState.pointerId) {
         return;
       }
@@ -427,6 +527,7 @@ export default function ProjectWorkspace({ project, tasks, role, driveItems }: P
     }
 
     function onUp(event: PointerEvent) {
+      if (!dragState) return;
       if (dragState.pointerId !== null && event.pointerId !== dragState.pointerId) {
         return;
       }
@@ -456,6 +557,9 @@ export default function ProjectWorkspace({ project, tasks, role, driveItems }: P
   function openTask(task: Task) {
     setSelectedId(task.id);
     setPanelOpen(true);
+    setAssigneeUnitId(task.owner_unit_id ?? "");
+    setAssigneeUserId(task.owner_user_id ?? "");
+    setAssigneeMsg("");
   }
 
   function addUploadedFile(taskId: string, item: FileItem) {
@@ -463,14 +567,67 @@ export default function ProjectWorkspace({ project, tasks, role, driveItems }: P
       ...prev,
       [taskId]: [item, ...(prev[taskId] ?? [])],
     }));
+    if (item.thumbnailLink) {
+      setThumbReady((prev) => ({ ...prev, [item.id]: false }));
+    }
   }
 
-  function addLog(taskId: string, noteText: string, value: number) {
-    const time = new Date().toLocaleString();
-    setLogsByTask((prev) => ({
-      ...prev,
-      [taskId]: [{ time, note: noteText || "進度更新", progress: value }, ...(prev[taskId] ?? [])],
-    }));
+  async function saveAssignees() {
+    if (!selectedTask) return;
+    setAssigneeMsg("");
+    const res = await updateTaskAssignees({
+      task_id: selectedTask.id,
+      owner_unit_id: assigneeUnitId || null,
+      owner_user_id: assigneeUserId || null,
+    });
+
+    if (!res?.ok) {
+      setAssigneeMsg(`指派更新失敗：${res?.error ?? "unknown"}`);
+      return;
+    }
+
+    setLocalTasks((prev) =>
+      prev.map((task) =>
+        task.id === selectedTask.id
+          ? {
+              ...task,
+              owner_unit_id: assigneeUnitId || null,
+              owner_user_id: assigneeUserId || null,
+            }
+          : task
+      )
+    );
+    setAssigneeMsg("已更新指派");
+  }
+
+  async function deleteFile(taskId: string, fileId: string) {
+    if (isViewer) return;
+    const confirmed = window.confirm("確定要刪除此檔案嗎？");
+    if (!confirmed) return;
+    try {
+      const res = await fetch("/api/drive/delete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ item_id: fileId }),
+      });
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const msg = payload?.error ?? "delete_failed";
+        alert(`刪除失敗：${msg}`);
+        return;
+      }
+      setFilesByTask((prev) => ({
+        ...prev,
+        [taskId]: (prev[taskId] ?? []).filter((item) => item.id !== fileId),
+      }));
+      setThumbReady((prev) => {
+        const next = { ...prev };
+        delete next[fileId];
+        return next;
+      });
+    } catch (err: any) {
+      alert(`刪除失敗：${err?.message ?? "delete_failed"}`);
+    }
   }
 
   function onCreateTask() {
@@ -481,7 +638,7 @@ export default function ProjectWorkspace({ project, tasks, role, driveItems }: P
     }
 
     startCreate(async () => {
-      const res: any = await createProjectTask({
+      const res = await createProjectTask({
         project_id: project.id,
         org_id: project.org_id,
         unit_id: project.unit_id,
@@ -492,24 +649,7 @@ export default function ProjectWorkspace({ project, tasks, role, driveItems }: P
       });
 
       if (!res?.ok) {
-        const fallback: Task = {
-          id: `local-${Date.now()}`,
-          seq: localTasks.length + 1,
-          phase_name: createPhase.trim() || "新任務",
-          code: null,
-          name: createName.trim(),
-          progress: 0,
-          duration_days: Math.max(1, createDuration),
-          start_offset_days: Math.max(0, createStartIndex),
-          owner_unit_id: null,
-          status: "ready",
-          parent_id: null,
-          level: 0,
-        };
-        setLocalTasks((prev) => [...prev, fallback]);
-        setCreateMsg(`新增失敗，先以本地任務顯示：${res?.error ?? "unknown"}`);
-        setCreateName("");
-        setCreateOpen(false);
+        setCreateMsg(`新增失敗：${res?.error ?? "unknown"}`);
         return;
       }
 
@@ -545,6 +685,7 @@ export default function ProjectWorkspace({ project, tasks, role, driveItems }: P
       duration_days: Math.max(1, subtaskDuration),
       start_offset_days: Math.max(0, subtaskStartIndex),
       owner_unit_id: null,
+      owner_user_id: null,
       status: "ready",
       parent_id: selectedTask.id,
       level: level + 1,
@@ -553,7 +694,7 @@ export default function ProjectWorkspace({ project, tasks, role, driveItems }: P
     setLocalTasks((prev) => [...prev, fallback]);
     setSubtaskName("");
     setSubtaskDuration(Math.max(1, selectedTask.duration_days));
-    setSubtaskOffset(selectedTask.start_offset_days);
+    setSubtaskStartIndex(selectedTask.start_offset_days);
     setSubtaskMsg("已新增");
   }
 
@@ -569,7 +710,7 @@ export default function ProjectWorkspace({ project, tasks, role, driveItems }: P
     setFlagManager({ open: false, taskId: null });
   }
 
-  function openFlagMenu(task: Task, event: ReactPointerEvent<HTMLDivElement>) {
+  function openFlagMenu(task: Task, event: React.MouseEvent<HTMLDivElement>) {
     event.preventDefault();
     event.stopPropagation();
     const rect = event.currentTarget.getBoundingClientRect();
@@ -618,7 +759,7 @@ export default function ProjectWorkspace({ project, tasks, role, driveItems }: P
     setMessage("");
     startTransition(async () => {
       const value = Math.max(0, Math.min(100, Number(progress)));
-      const res: any = await updateTaskProgress({
+      const res = await updateTaskProgress({
         task_id: selectedTask.id,
         progress: value,
         note,
@@ -644,11 +785,15 @@ export default function ProjectWorkspace({ project, tasks, role, driveItems }: P
             : task
         )
       );
-      setNotesByTask((prev) => ({
-        ...prev,
-        [selectedTask.id]: note.trim() ? note.trim() : "進度更新",
-      }));
-      addLog(selectedTask.id, note, value);
+
+      const newLog: ActivityLog = {
+        id: `local-log-${Date.now()}`,
+        time: new Date().toISOString(),
+        note: note.trim() || "進度更新",
+        progress: value,
+        user_name: "我", // Optimistic update uses a generic name
+      };
+      setActivityLogs(prev => [newLog, ...prev]);
     });
   }
 
@@ -697,28 +842,34 @@ export default function ProjectWorkspace({ project, tasks, role, driveItems }: P
         <div>
           <div className="page-title">{project.name}</div>
           <div className="page-subtitle">
-            狀態 {project.status ?? "active"} ・開始 {project.start_date || "-"}
+            狀態 {formatStatus(project.status)} ・開始 {formatDateString(project.start_date)}
           </div>
         </div>
         <div className="topbar-right">
           <span className="badge">{role ?? "member"}</span>
-          <button className="btn btn-ghost" type="button">
+          <button className="btn btn-ghost" type="button" onClick={handleExportReport}>
             匯出報表
           </button>
         </div>
       </div>
 
       <div className="tabs">
-        {tabs.map((tab) => (
-          <button
-            key={tab.id}
-            type="button"
-            className={`tab ${activeTab === tab.id ? "tab-active" : ""}`}
-            onClick={() => setActiveTab(tab.id)}
-          >
-            {tab.label}
-          </button>
-        ))}
+        {tabs.map((tab) =>
+          tab.href ? (
+            <Link key={tab.id} className="tab" href={tab.href}>
+              {tab.label}
+            </Link>
+          ) : (
+            <button
+              key={tab.id}
+              type="button"
+              className={`tab ${activeTab === tab.id ? "tab-active" : ""}`}
+              onClick={() => setActiveTab(tab.id)}
+            >
+              {tab.label}
+            </button>
+          )
+        )}
       </div>
 
       {activeTab === "dashboard" && (
@@ -750,10 +901,10 @@ export default function ProjectWorkspace({ project, tasks, role, driveItems }: P
 
       {activeTab === "board" && (
         <div className="board">
-          {phaseEntries.map(([phase, items]) => (
-            <div className="board-column" key={phase}>
+          {boardEntries.map(([column, items]) => (
+            <div className="board-column" key={column.id}>
               <div className="card-header">
-                <div className="card-title">{phase}</div>
+                <div className="card-title">{column.label}</div>
                 <span className="badge">{items.length}</span>
               </div>
               {items.map((task) => (
@@ -763,18 +914,6 @@ export default function ProjectWorkspace({ project, tasks, role, driveItems }: P
                   onClick={() => openTask(task)}
                 >
                   <div className="task-card-title">
-                    {(childCount.get(task.id) ?? 0) > 0 && (
-                      <button
-                        className="collapse-toggle"
-                        type="button"
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          toggleCollapsed(task.id);
-                        }}
-                      >
-                        {collapsedIds.has(task.id) ? "+" : "−"}
-                      </button>
-                    )}
                     <strong>
                       {task.code ? `[${task.code}] ` : ""}
                       {task.name}
@@ -795,7 +934,7 @@ export default function ProjectWorkspace({ project, tasks, role, driveItems }: P
         <>
           <div className="card">
             <div className="card-header">
-              <div className="card-title">Timeline</div>
+              <div className="card-title">時間軸</div>
               <div className="topbar-right">
                 <button className="btn btn-primary" type="button" onClick={() => setCreateOpen((v) => !v)}>
                   新增任務
@@ -1067,7 +1206,7 @@ export default function ProjectWorkspace({ project, tasks, role, driveItems }: P
                           <button
                             className="btn btn-ghost"
                             type="button"
-                            onClick={() => deleteFlag(flagManager.taskId, flag.id)}
+                            onClick={() => deleteFlag(flagManager.taskId!, flag.id)}
                           >
                             刪除
                           </button>
@@ -1112,15 +1251,39 @@ export default function ProjectWorkspace({ project, tasks, role, driveItems }: P
                   return (
                     <div className="file-item" key={file.id}>
                       {thumbSrc ? (
-                        <img className="file-thumb" src={thumbSrc} alt={file.name} loading="lazy" />
+                        <>
+                          <img
+                            className="file-thumb"
+                            src={thumbSrc}
+                            alt={file.name}
+                            loading="lazy"
+                            style={{ display: thumbReady[file.id] ? "block" : "none" }}
+                            onLoad={() => setThumbReady((prev) => ({ ...prev, [file.id]: true }))}
+                            onError={() => setThumbReady((prev) => ({ ...prev, [file.id]: false }))}
+                          />
+                          {!thumbReady[file.id] && (
+                            <div className="file-thumb file-thumb-fallback">檔案</div>
+                          )}
+                        </>
                       ) : (
-                        <div className="file-thumb file-thumb-fallback">FILE</div>
+                        <div className="file-thumb file-thumb-fallback">檔案</div>
                       )}
                       <div className="file-meta">
                         <div className="file-title">{file.name}</div>
-                        <a className="page-subtitle" href={file.url} target="_blank" rel="noreferrer">
-                          {file.url}
-                        </a>
+                        <div className="topbar-right">
+                          <a className="btn btn-ghost" href={file.url} target="_blank" rel="noreferrer">
+                            開啟檔案
+                          </a>
+                          {!isViewer && (
+                            <button
+                              className="btn btn-ghost"
+                              type="button"
+                              onClick={() => deleteFile(task.id, file.id)}
+                            >
+                              刪除
+                            </button>
+                          )}
+                        </div>
                       </div>
                     </div>
                   );
@@ -1142,196 +1305,292 @@ export default function ProjectWorkspace({ project, tasks, role, driveItems }: P
         </div>
       )}
 
-      <Sheet open={panelOpen} onOpenChange={setPanelOpen}>
-        <SheetContent side="right" className="task-panel">
-          <SheetHeader>
-            <SheetTitle>Task Detail</SheetTitle>
-          </SheetHeader>
+      {panelOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div
+            className="absolute inset-0 bg-black/40"
+            onClick={() => setPanelOpen(false)}
+          />
+          <div className="relative z-10 w-[min(960px,95vw)] max-h-[92vh] overflow-y-auto rounded-2xl bg-white shadow-2xl">
+            <div className="flex items-center justify-between border-b border-slate-200 px-6 py-4">
+              <div className="text-lg font-semibold text-slate-800">任務詳情</div>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                onClick={() => setPanelOpen(false)}
+                aria-label="關閉"
+              >
+                ✕
+              </Button>
+            </div>
 
-          {!selectedTask && <div className="page-subtitle">尚未選擇任務</div>}
+            <div className="p-6">
+              {!selectedTask && <div className="page-subtitle">尚未選擇任務</div>}
 
-          {selectedTask && (
-            <div className="panel-stack">
-              <div className="card" style={{ padding: 14 }}>
-                <div className="card-title">
-                  {selectedTask.code ? `[${selectedTask.code}] ` : ""}
-                  {selectedTask.name}
-                </div>
-                <div className="page-subtitle">階段 {selectedTask.phase_name}</div>
-                <div className="page-subtitle">
-                  開始 {formatDate(getTaskStartDate(selectedTask))} ・結束{" "}
-                  {formatDate(getTaskEndDate(selectedTask))} ・工期 {selectedTask.duration_days} 天
-                </div>
-              </div>
-
-              <div className="card" style={{ padding: 14 }}>
-                <div className="card-header">
-                  <div className="card-title">進度回報</div>
-                  <span className="badge">{progress}%</span>
-                </div>
-                <label className="page-subtitle" htmlFor="task-status">
-                  任務狀態
-                </label>
-                <select
-                  id="task-status"
-                  className="select"
-                  value={getTaskStatus(selectedTask)}
-                  onChange={(e) => onStatusChange(e.target.value as TaskStatus)}
-                  disabled={isViewer}
-                >
-                  <option value="ready">Ready / To Do</option>
-                  <option value="in_progress">In Progress</option>
-                  <option value="completed">Completed</option>
-                  <option value="error">Error</option>
-                </select>
-                <label className="page-subtitle" htmlFor="task-progress">
-                  完成百分比 (0-100)
-                </label>
-                <input
-                  id="task-progress"
-                  className="range"
-                  type="range"
-                  min={0}
-                  max={100}
-                  value={progress}
-                  onChange={(e) => setProgress(Number(e.target.value))}
-                  disabled={isViewer}
-                />
-                <label className="page-subtitle" htmlFor="task-note">
-                  回報說明
-                </label>
-                <textarea
-                  id="task-note"
-                  className="textarea"
-                  placeholder="進度備註"
-                  value={note}
-                  onChange={(e) => setNote(e.target.value)}
-                  rows={3}
-                  disabled={isViewer}
-                />
-                <div className="topbar-right">
-                  <button className="btn btn-primary" type="button" onClick={saveProgress} disabled={isPending || isViewer}>
-                    {isPending ? "Saving..." : "Save"}
-                  </button>
-                  <button className="btn btn-ghost" type="button" onClick={() => setPanelOpen(false)}>
-                    Close
-                  </button>
-                </div>
-                {message && <div className="page-subtitle">{message}</div>}
-              </div>
-
-              <div className="card" style={{ padding: 14 }}>
-                <div className="card-header">
-                  <div className="card-title">子任務</div>
-                  <span className="badge">最多兩層</span>
-                </div>
-                <div className="page-subtitle">點子任務可再次編輯。</div>
-                {(localTasks.filter((task) => task.parent_id === selectedTask.id) ?? []).length === 0 && (
-                  <div className="page-subtitle">尚無子任務</div>
-                )}
-                {(localTasks.filter((task) => task.parent_id === selectedTask.id) ?? []).map((task) => (
-                  <div className="task-card task-card-level-1" key={`sub-${task.id}`} onClick={() => openTask(task)}>
-                    <div>{task.name}</div>
-                    <div className="page-subtitle">工期 {task.duration_days} 天</div>
-                  </div>
-                ))}
-                <div className="admin-form-grid" style={{ padding: 0, border: "none" }}>
-                  <label className="page-subtitle" htmlFor="subtask-name">
-                    子任務名稱
-                  </label>
-                  <input
-                    id="subtask-name"
-                    placeholder="子任務名稱"
-                    value={subtaskName}
-                    onChange={(e) => setSubtaskName(e.target.value)}
-                    disabled={isViewer}
-                  />
-                  <label className="page-subtitle" htmlFor="subtask-start-date">
-                    開始日期
-                  </label>
-                  <select
-                    id="subtask-start-date"
-                    className="select"
-                    value={subtaskStartIndex}
-                    onChange={(e) => setSubtaskStartIndex(Number(e.target.value))}
-                    disabled={isViewer}
-                  >
-                    {dayList.map((day, index) => (
-                      <option key={`subtask-day-${index}`} value={index}>
-                        開始日期 {formatDate(day)}
-                      </option>
-                    ))}
-                  </select>
-                  <label className="page-subtitle" htmlFor="subtask-duration">
-                    工期 (天)
-                  </label>
-                  <input
-                    id="subtask-duration"
-                    type="number"
-                    placeholder="工期 (天)"
-                    value={subtaskDuration}
-                    onChange={(e) => setSubtaskDuration(Number(e.target.value))}
-                    disabled={isViewer}
-                  />
-                  <button type="button" onClick={onCreateSubtask} disabled={isViewer}>
-                    新增子任務
-                  </button>
-                  {subtaskMsg && <div className="page-subtitle">{subtaskMsg}</div>}
-                </div>
-              </div>
-
-              <div className="card" style={{ padding: 14 }}>
-                <div className="card-header">
-                  <div className="card-title">文件連結</div>
-                </div>
-                <FileUploadForm
-                  taskId={selectedTask.id}
-                  onUploaded={(item) => addUploadedFile(selectedTask.id, item)}
-                  disabled={isViewer}
-                />
-                <div className="page-subtitle">目前連結數量 {filesByTask[selectedTask.id]?.length ?? 0}</div>
-                <div>
-                  {(filesByTask[selectedTask.id] ?? []).map((file) => {
-                    const thumbSrc = getThumbnailSrc(file);
-                    return (
-                      <div className="file-item" key={file.id}>
-                        {thumbSrc ? (
-                          <img className="file-thumb" src={thumbSrc} alt={file.name} loading="lazy" />
-                        ) : (
-                          <div className="file-thumb file-thumb-fallback">FILE</div>
-                        )}
-                        <div className="file-meta">
-                          <div className="file-title">{file.name}</div>
-                          <a className="page-subtitle" href={file.url} target="_blank" rel="noreferrer">
-                            {file.url}
-                          </a>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-
-              <div className="card" style={{ padding: 14 }}>
-                <div className="card-header">
-                  <div className="card-title">活動紀錄</div>
-                </div>
-                {(logsByTask[selectedTask.id] ?? []).length === 0 && (
-                  <div className="page-subtitle">尚無更新紀錄</div>
-                )}
-                {(logsByTask[selectedTask.id] ?? []).map((log, index) => (
-                  <div className="task-card" key={`${log.time}-${index}`}>
-                    <div>{log.note}</div>
+              {selectedTask && (
+                <div className="panel-stack">
+                  <div className="card" style={{ padding: 14 }}>
+                    <div className="card-title">
+                      {selectedTask.code ? `[${selectedTask.code}] ` : ""}
+                      {selectedTask.name}
+                    </div>
+                    <div className="page-subtitle">階段 {selectedTask.phase_name}</div>
                     <div className="page-subtitle">
-                      {log.time} ・{log.progress}%
+                      開始 {formatDate(getTaskStartDate(selectedTask))} ・結束{" "}
+                      {formatDate(getTaskEndDate(selectedTask))} ・工期 {selectedTask.duration_days} 天
                     </div>
                   </div>
-                ))}
-              </div>
+
+                  <div className="card" style={{ padding: 14 }}>
+                    <div className="card-header">
+                      <div className="card-title">指派負責人</div>
+                    </div>
+                    <div className="page-subtitle">
+                      選擇部門代表該部門所有人皆為負責人，也可額外指定個人。
+                    </div>
+                    <label className="page-subtitle" htmlFor="task-owner-unit">
+                      負責單位
+                    </label>
+                    <select
+                      id="task-owner-unit"
+                      className="select"
+                      value={assigneeUnitId}
+                      onChange={(e) => setAssigneeUnitId(e.target.value)}
+                      disabled={isViewer}
+                    >
+                      <option value="">未指定</option>
+                      {units.map((unit) => (
+                        <option key={unit.id} value={unit.id}>
+                          {unit.name}
+                        </option>
+                      ))}
+                    </select>
+                    <label className="page-subtitle" htmlFor="task-owner-user">
+                      負責個人
+                    </label>
+                    <select
+                      id="task-owner-user"
+                      className="select"
+                      value={assigneeUserId}
+                      onChange={(e) => setAssigneeUserId(e.target.value)}
+                      disabled={isViewer}
+                    >
+                      <option value="">未指定</option>
+                      {memberOptions.map((member) => (
+                        <option key={`${member.user_id}-${member.unit_id}`} value={member.user_id}>
+                          {member.label}
+                        </option>
+                      ))}
+                    </select>
+                    <div className="topbar-right">
+                      <button
+                        className="btn btn-primary"
+                        type="button"
+                        onClick={saveAssignees}
+                        disabled={isViewer}
+                      >
+                        儲存指派
+                      </button>
+                    </div>
+                    {assigneeMsg && <div className="page-subtitle">{assigneeMsg}</div>}
+                  </div>
+
+                  <div className="card" style={{ padding: 14 }}>
+                    <div className="card-header">
+                      <div className="card-title">進度回報</div>
+                      <span className="badge">{progress}%</span>
+                    </div>
+                    <label className="page-subtitle" htmlFor="task-status">
+                      任務狀態
+                    </label>
+                    <select
+                      id="task-status"
+                      className="select"
+                      value={getTaskStatus(selectedTask)}
+                      onChange={(e) => onStatusChange(e.target.value as TaskStatus)}
+                      disabled={isViewer}
+                    >
+                      <option value="ready">待處理</option>
+                      <option value="in_progress">進行中</option>
+                      <option value="completed">已完成</option>
+                      <option value="error">異常</option>
+                    </select>
+                    <label className="page-subtitle" htmlFor="task-progress">
+                      完成百分比 (0-100)
+                    </label>
+                    <input
+                      id="task-progress"
+                      className="range"
+                      type="range"
+                      min={0}
+                      max={100}
+                      value={progress}
+                      onChange={(e) => setProgress(Number(e.target.value))}
+                      disabled={isViewer}
+                    />
+                    <label className="page-subtitle" htmlFor="task-note">
+                      回報說明
+                    </label>
+                    <textarea
+                      id="task-note"
+                      className="textarea"
+                      placeholder="進度備註"
+                      value={note}
+                      onChange={(e) => setNote(e.target.value)}
+                      rows={3}
+                      disabled={isViewer}
+                    />
+                    <div className="topbar-right">
+                      <button className="btn btn-primary" type="button" onClick={saveProgress} disabled={isPending || isViewer}>
+                        {isPending ? "儲存中..." : "儲存"}
+                      </button>
+                      <button className="btn btn-ghost" type="button" onClick={() => setPanelOpen(false)}>
+                        關閉
+                      </button>
+                    </div>
+                    {message && <div className="page-subtitle">{message}</div>}
+                  </div>
+
+                  <div className="card" style={{ padding: 14 }}>
+                    <div className="card-header">
+                      <div className="card-title">子任務</div>
+                      <span className="badge">最多兩層</span>
+                    </div>
+                    <div className="page-subtitle">點子任務可再次編輯。</div>
+                    {(localTasks.filter((task) => task.parent_id === selectedTask.id) ?? []).length === 0 && (
+                      <div className="page-subtitle">尚無子任務</div>
+                    )}
+                    {(localTasks.filter((task) => task.parent_id === selectedTask.id) ?? []).map((task) => (
+                      <div className="task-card task-card-level-1" key={`sub-${task.id}`} onClick={() => openTask(task)}>
+                        <div>{task.name}</div>
+                        <div className="page-subtitle">工期 {task.duration_days} 天</div>
+                      </div>
+                    ))}
+                    <div className="admin-form-grid" style={{ padding: 0, border: "none" }}>
+                      <label className="page-subtitle" htmlFor="subtask-name">
+                        子任務名稱
+                      </label>
+                      <input
+                        id="subtask-name"
+                        placeholder="子任務名稱"
+                        value={subtaskName}
+                        onChange={(e) => setSubtaskName(e.target.value)}
+                        disabled={isViewer}
+                      />
+                      <label className="page-subtitle" htmlFor="subtask-start-date">
+                        開始日期
+                      </label>
+                      <select
+                        id="subtask-start-date"
+                        className="select"
+                        value={subtaskStartIndex}
+                        onChange={(e) => setSubtaskStartIndex(Number(e.target.value))}
+                        disabled={isViewer}
+                      >
+                        {dayList.map((day, index) => (
+                          <option key={`subtask-day-${index}`} value={index}>
+                            開始日期 {formatDate(day)}
+                          </option>
+                        ))}
+                      </select>
+                      <label className="page-subtitle" htmlFor="subtask-duration">
+                        工期 (天)
+                      </label>
+                      <input
+                        id="subtask-duration"
+                        type="number"
+                        placeholder="工期 (天)"
+                        value={subtaskDuration}
+                        onChange={(e) => setSubtaskDuration(Number(e.target.value))}
+                        disabled={isViewer}
+                      />
+                      <button type="button" onClick={onCreateSubtask} disabled={isViewer}>
+                        新增子任務
+                      </button>
+                      {subtaskMsg && <div className="page-subtitle">{subtaskMsg}</div>}
+                    </div>
+                  </div>
+
+                  <div className="card" style={{ padding: 14 }}>
+                    <div className="card-header">
+                      <div className="card-title">文件連結</div>
+                    </div>
+                    <FileUploadForm
+                      taskId={selectedTask.id}
+                      onUploaded={(item) => addUploadedFile(selectedTask.id, item)}
+                      disabled={isViewer}
+                    />
+                    <div className="page-subtitle">目前連結數量 {filesByTask[selectedTask.id]?.length ?? 0}</div>
+                    <div>
+                      {(filesByTask[selectedTask.id] ?? []).map((file) => {
+                        const thumbSrc = getThumbnailSrc(file);
+                        return (
+                          <div className="file-item" key={file.id}>
+                            {thumbSrc ? (
+                              <>
+                                <img
+                                  className="file-thumb"
+                                  src={thumbSrc}
+                                  alt={file.name}
+                                  loading="lazy"
+                                  style={{ display: thumbReady[file.id] ? "block" : "none" }}
+                                  onLoad={() => setThumbReady((prev) => ({ ...prev, [file.id]: true }))}
+                                  onError={() => setThumbReady((prev) => ({ ...prev, [file.id]: false }))}
+                                />
+                                {!thumbReady[file.id] && (
+                                  <div className="file-thumb file-thumb-fallback">檔案</div>
+                                )}
+                              </>
+                            ) : (
+                              <div className="file-thumb file-thumb-fallback">檔案</div>
+                            )}
+                            <div className="file-meta">
+                              <div className="file-title">{file.name}</div>
+                              <div className="topbar-right">
+                                <a className="btn btn-ghost" href={file.url} target="_blank" rel="noreferrer">
+                                  開啟檔案
+                                </a>
+                                {!isViewer && (
+                                  <button
+                                    className="btn btn-ghost"
+                                    type="button"
+                                    onClick={() => deleteFile(selectedTask.id, file.id)}
+                                  >
+                                    刪除
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  <div className="card" style={{ padding: 14 }}>
+                    <div className="card-header">
+                      <div className="card-title">活動紀錄</div>
+                    </div>
+                    {isLogPending && <div className="page-subtitle">讀取紀錄中...</div>}
+                    {!isLogPending && activityLogs.length === 0 && (
+                      <div className="page-subtitle">尚無更新紀錄</div>
+                    )}
+                    {activityLogs.map((log) => (
+                      <div className="task-card" key={log.id}>
+                        <div>{log.note || "進度更新"}</div>
+                        <div className="page-subtitle">
+                          {formatDateString(log.time)} ・ {log.user_name} ・ {log.progress}%
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
-          )}
-        </SheetContent>
-      </Sheet>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1346,7 +1605,7 @@ function FileUploadForm({
   disabled?: boolean;
 }) {
   const driveFolderUrl = process.env.NEXT_PUBLIC_GOOGLE_DRIVE_FOLDER_URL;
-  const driveFolderName = process.env.NEXT_PUBLIC_GOOGLE_DRIVE_FOLDER_NAME ?? "Google Drive";
+  const driveFolderName = process.env.NEXT_PUBLIC_GOOGLE_DRIVE_FOLDER_NAME ?? "Google 雲端硬碟";
   const [displayName, setDisplayName] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const [message, setMessage] = useState("");
@@ -1381,7 +1640,7 @@ function FileUploadForm({
         const errorKey = payload?.error ?? "upload_failed";
         const friendlyMessages: Record<string, string> = {
           missing_google_oauth:
-            "尚未設定 Google Drive OAuth，請先設定 GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET / GOOGLE_REFRESH_TOKEN。",
+            "尚未設定 Google 雲端硬碟 OAuth，請先設定 GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET / GOOGLE_REFRESH_TOKEN。",
           not_authenticated: "尚未登入，請先登入後再上傳。",
           permission_denied: "沒有上傳權限，請聯絡管理員。",
           task_not_found: "找不到任務，請重新整理頁面。",
@@ -1434,7 +1693,7 @@ function FileUploadForm({
         disabled={disabled || isUploading}
       />
       <button type="button" onClick={handleUpload} disabled={disabled || isUploading}>
-        {isUploading ? "上傳中..." : "上傳到 Google Drive"}
+        {isUploading ? "上傳中..." : "上傳到 Google 雲端硬碟"}
       </button>
       <div className="page-subtitle">圖片超過 2MB 會壓縮，其他檔案上限 10MB。</div>
       {driveFolderUrl && (

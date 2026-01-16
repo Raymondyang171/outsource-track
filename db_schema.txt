@@ -97,6 +97,122 @@ CREATE FUNCTION public.is_unit_member(p_org uuid, p_unit uuid) RETURNS boolean
 $$;
 
 
+--
+-- Name: is_org_role(uuid, role_type[]); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.is_org_role(p_org uuid, p_roles public.role_type[]) RETURNS boolean
+    LANGUAGE sql STABLE SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    SET row_security TO 'off'
+    AS $$
+  select exists (
+    select 1
+    from public.memberships m
+    where m.org_id = p_org
+      and m.user_id = auth.uid()
+      and m.role = any(p_roles)
+  );
+$$;
+
+
+--
+-- Name: cost_items_compute_amount(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.cost_items_compute_amount() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+begin
+  if new.qty is null then
+    new.qty := 1;
+  end if;
+  if new.unit_price is null then
+    new.unit_price := 0;
+  end if;
+  new.amount := round(new.qty * new.unit_price, 2);
+  if new.tax_rate is not null and new.tax_amount is null then
+    new.tax_amount := round(new.amount * new.tax_rate, 2);
+  end if;
+  return new;
+end;
+$$;
+
+
+--
+-- Name: recalc_cost_request_total(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.recalc_cost_request_total() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+declare
+  v_request_id uuid;
+begin
+  if tg_op = 'DELETE' then
+    v_request_id := old.cost_request_id;
+  else
+    v_request_id := new.cost_request_id;
+  end if;
+
+  update public.cost_requests
+  set total_amount = coalesce((
+    select sum(amount)
+    from public.cost_items
+    where cost_request_id = v_request_id
+  ), 0)
+  where id = v_request_id;
+
+  return null;
+end;
+$$;
+
+
+--
+-- Name: cost_requests_enforce(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.cost_requests_enforce() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+declare
+  is_admin boolean;
+  transition_ok boolean;
+begin
+  if tg_op = 'INSERT' then
+    if new.status <> 'paid' and new.payment_date is not null then
+      raise exception 'payment_date only allowed when status=paid';
+    end if;
+    return new;
+  end if;
+
+  new.updated_at := now();
+  is_admin := public.is_org_role(new.org_id, array['admin']::public.role_type[]);
+
+  if not is_admin and new.status <> old.status then
+    transition_ok := false;
+    if old.status = 'draft' and new.status = 'submitted' then
+      transition_ok := true;
+    elsif old.status = 'submitted' and new.status in ('approved', 'rejected') then
+      transition_ok := true;
+    elsif old.status = 'approved' and new.status = 'paid' then
+      transition_ok := true;
+    end if;
+
+    if not transition_ok then
+      raise exception 'invalid status transition from % to %', old.status, new.status;
+    end if;
+  end if;
+
+  if new.status <> 'paid' and new.payment_date is not null then
+    raise exception 'payment_date only allowed when status=paid';
+  end if;
+
+  return new;
+end;
+$$;
+
+
 SET default_tablespace = '';
 
 SET default_table_access_method = heap;
@@ -120,6 +236,101 @@ CREATE TABLE public.drive_items (
     thumbnail_link text,
     file_size_bytes bigint,
     original_size_bytes bigint
+);
+
+
+--
+-- Name: cost_types; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.cost_types (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    org_id uuid NOT NULL,
+    name text NOT NULL,
+    active boolean DEFAULT true NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: cost_requests; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.cost_requests (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    org_id uuid NOT NULL,
+    unit_id uuid NOT NULL,
+    project_id uuid NOT NULL,
+    doc_no text NOT NULL,
+    request_date date NOT NULL,
+    requested_by uuid NOT NULL,
+    payee_type text NOT NULL,
+    payee_name text NOT NULL,
+    currency text NOT NULL,
+    total_amount numeric(14,2) DEFAULT 0 NOT NULL,
+    status text DEFAULT 'draft'::text NOT NULL,
+    submitted_at timestamp with time zone,
+    approved_at timestamp with time zone,
+    approved_by uuid,
+    rejected_at timestamp with time zone,
+    rejected_reason text,
+    payment_date date,
+    payment_method text,
+    note text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT cost_requests_payment_date_check CHECK (((status = 'paid'::text) OR (payment_date IS NULL))),
+    CONSTRAINT cost_requests_status_check CHECK ((status = ANY (ARRAY['draft'::text, 'submitted'::text, 'approved'::text, 'rejected'::text, 'paid'::text, 'canceled'::text])))
+);
+
+
+--
+-- Name: cost_items; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.cost_items (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    cost_request_id uuid NOT NULL,
+    org_id uuid NOT NULL,
+    unit_id uuid NOT NULL,
+    project_id uuid NOT NULL,
+    project_task_id uuid,
+    expense_type_id uuid NOT NULL,
+    description text NOT NULL,
+    qty numeric(14,3) DEFAULT 1 NOT NULL,
+    uom text,
+    unit_price numeric(14,2) DEFAULT 0 NOT NULL,
+    amount numeric(14,2) DEFAULT 0 NOT NULL,
+    tax_rate numeric(6,4),
+    tax_amount numeric(14,2),
+    is_tax_included boolean DEFAULT true,
+    incurred_on date,
+    used_by uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: cost_attachments; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.cost_attachments (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    cost_request_id uuid,
+    cost_item_id uuid,
+    org_id uuid NOT NULL,
+    unit_id uuid NOT NULL,
+    uploaded_by uuid NOT NULL,
+    kind text NOT NULL,
+    file_name text NOT NULL,
+    mime_type text,
+    storage_provider text DEFAULT 'gdrive'::text NOT NULL,
+    external_file_id text,
+    web_view_link text,
+    invoice_no text,
+    issued_on date,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT cost_attachments_request_or_item_check CHECK (((cost_request_id IS NOT NULL) OR (cost_item_id IS NOT NULL)))
 );
 
 
@@ -209,6 +420,7 @@ CREATE TABLE public.project_tasks (
     start_offset_days integer DEFAULT 0 NOT NULL,
     duration_days integer DEFAULT 1 NOT NULL,
     owner_unit_id uuid,
+    owner_user_id uuid,
     progress integer DEFAULT 0 NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     org_id uuid NOT NULL,
@@ -316,6 +528,38 @@ ALTER TABLE ONLY public.assist_requests
 
 ALTER TABLE ONLY public.drive_items
     ADD CONSTRAINT drive_items_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: cost_attachments cost_attachments_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.cost_attachments
+    ADD CONSTRAINT cost_attachments_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: cost_items cost_items_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.cost_items
+    ADD CONSTRAINT cost_items_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: cost_requests cost_requests_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.cost_requests
+    ADD CONSTRAINT cost_requests_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: cost_types cost_types_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.cost_types
+    ADD CONSTRAINT cost_types_pkey PRIMARY KEY (id);
 
 
 --
@@ -473,6 +717,78 @@ CREATE INDEX idx_assist_requests_to_unit ON public.assist_requests USING btree (
 
 CREATE INDEX idx_drive_items_org_unit ON public.drive_items USING btree (org_id, unit_id);
 
+--
+-- Name: idx_cost_attachments_item; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_cost_attachments_item ON public.cost_attachments USING btree (cost_item_id);
+
+--
+-- Name: idx_cost_attachments_org_unit; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_cost_attachments_org_unit ON public.cost_attachments USING btree (org_id, unit_id);
+
+--
+-- Name: idx_cost_attachments_request; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_cost_attachments_request ON public.cost_attachments USING btree (cost_request_id);
+
+--
+-- Name: idx_cost_items_org_unit; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_cost_items_org_unit ON public.cost_items USING btree (org_id, unit_id);
+
+--
+-- Name: idx_cost_items_project; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_cost_items_project ON public.cost_items USING btree (project_id);
+
+--
+-- Name: idx_cost_items_request; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_cost_items_request ON public.cost_items USING btree (cost_request_id);
+
+--
+-- Name: idx_cost_requests_org_doc; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX idx_cost_requests_org_doc ON public.cost_requests USING btree (org_id, doc_no);
+
+--
+-- Name: idx_cost_requests_org_project; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_cost_requests_org_project ON public.cost_requests USING btree (org_id, project_id);
+
+--
+-- Name: idx_cost_requests_org_request_date; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_cost_requests_org_request_date ON public.cost_requests USING btree (org_id, request_date);
+
+--
+-- Name: idx_cost_requests_org_status; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_cost_requests_org_status ON public.cost_requests USING btree (org_id, status);
+
+--
+-- Name: idx_cost_requests_org_unit; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_cost_requests_org_unit ON public.cost_requests USING btree (org_id, unit_id);
+
+--
+-- Name: idx_cost_types_org; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_cost_types_org ON public.cost_types USING btree (org_id);
+
 
 --
 -- Name: idx_progress_logs_org_unit; Type: INDEX; Schema: public; Owner: -
@@ -493,6 +809,13 @@ CREATE INDEX idx_project_tasks_org_unit ON public.project_tasks USING btree (org
 --
 
 CREATE INDEX idx_project_tasks_project_id ON public.project_tasks USING btree (project_id);
+
+
+--
+-- Name: idx_project_tasks_owner_user_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_project_tasks_owner_user_id ON public.project_tasks USING btree (owner_user_id);
 
 
 --
@@ -578,6 +901,132 @@ ALTER TABLE ONLY public.drive_items
 
 
 --
+-- Name: cost_attachments cost_attachments_cost_item_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.cost_attachments
+    ADD CONSTRAINT cost_attachments_cost_item_id_fkey FOREIGN KEY (cost_item_id) REFERENCES public.cost_items(id) ON DELETE CASCADE;
+
+--
+-- Name: cost_attachments cost_attachments_cost_request_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.cost_attachments
+    ADD CONSTRAINT cost_attachments_cost_request_id_fkey FOREIGN KEY (cost_request_id) REFERENCES public.cost_requests(id) ON DELETE CASCADE;
+
+--
+-- Name: cost_attachments cost_attachments_org_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.cost_attachments
+    ADD CONSTRAINT cost_attachments_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.orgs(id) ON DELETE CASCADE;
+
+--
+-- Name: cost_attachments cost_attachments_unit_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.cost_attachments
+    ADD CONSTRAINT cost_attachments_unit_id_fkey FOREIGN KEY (unit_id) REFERENCES public.units(id) ON DELETE CASCADE;
+
+--
+-- Name: cost_attachments cost_attachments_uploaded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.cost_attachments
+    ADD CONSTRAINT cost_attachments_uploaded_by_fkey FOREIGN KEY (uploaded_by) REFERENCES public.profiles(user_id);
+
+--
+-- Name: cost_items cost_items_cost_request_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.cost_items
+    ADD CONSTRAINT cost_items_cost_request_id_fkey FOREIGN KEY (cost_request_id) REFERENCES public.cost_requests(id) ON DELETE CASCADE;
+
+--
+-- Name: cost_items cost_items_expense_type_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.cost_items
+    ADD CONSTRAINT cost_items_expense_type_id_fkey FOREIGN KEY (expense_type_id) REFERENCES public.cost_types(id);
+
+--
+-- Name: cost_items cost_items_org_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.cost_items
+    ADD CONSTRAINT cost_items_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.orgs(id) ON DELETE CASCADE;
+
+--
+-- Name: cost_items cost_items_project_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.cost_items
+    ADD CONSTRAINT cost_items_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id) ON DELETE CASCADE;
+
+--
+-- Name: cost_items cost_items_project_task_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.cost_items
+    ADD CONSTRAINT cost_items_project_task_id_fkey FOREIGN KEY (project_task_id) REFERENCES public.project_tasks(id) ON DELETE SET NULL;
+
+--
+-- Name: cost_items cost_items_unit_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.cost_items
+    ADD CONSTRAINT cost_items_unit_id_fkey FOREIGN KEY (unit_id) REFERENCES public.units(id) ON DELETE CASCADE;
+
+--
+-- Name: cost_items cost_items_used_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.cost_items
+    ADD CONSTRAINT cost_items_used_by_fkey FOREIGN KEY (used_by) REFERENCES public.profiles(user_id);
+
+--
+-- Name: cost_requests cost_requests_approved_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.cost_requests
+    ADD CONSTRAINT cost_requests_approved_by_fkey FOREIGN KEY (approved_by) REFERENCES public.profiles(user_id);
+
+--
+-- Name: cost_requests cost_requests_org_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.cost_requests
+    ADD CONSTRAINT cost_requests_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.orgs(id) ON DELETE CASCADE;
+
+--
+-- Name: cost_requests cost_requests_project_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.cost_requests
+    ADD CONSTRAINT cost_requests_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id) ON DELETE CASCADE;
+
+--
+-- Name: cost_requests cost_requests_requested_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.cost_requests
+    ADD CONSTRAINT cost_requests_requested_by_fkey FOREIGN KEY (requested_by) REFERENCES public.profiles(user_id);
+
+--
+-- Name: cost_requests cost_requests_unit_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.cost_requests
+    ADD CONSTRAINT cost_requests_unit_id_fkey FOREIGN KEY (unit_id) REFERENCES public.units(id) ON DELETE CASCADE;
+
+--
+-- Name: cost_types cost_types_org_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.cost_types
+    ADD CONSTRAINT cost_types_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.orgs(id) ON DELETE CASCADE;
+
+--
 -- Name: memberships memberships_org_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -655,6 +1104,14 @@ ALTER TABLE ONLY public.project_tasks
 
 ALTER TABLE ONLY public.project_tasks
     ADD CONSTRAINT project_tasks_owner_unit_id_fkey FOREIGN KEY (owner_unit_id) REFERENCES public.units(id);
+
+
+--
+-- Name: project_tasks project_tasks_owner_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_tasks
+    ADD CONSTRAINT project_tasks_owner_user_id_fkey FOREIGN KEY (owner_user_id) REFERENCES public.profiles(user_id) ON DELETE SET NULL;
 
 
 --
@@ -754,6 +1211,24 @@ ALTER TABLE ONLY public.units
 
 
 --
+--
+-- Name: trg_cost_items_compute_amount; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_cost_items_compute_amount BEFORE INSERT OR UPDATE ON public.cost_items FOR EACH ROW EXECUTE FUNCTION public.cost_items_compute_amount();
+
+--
+-- Name: trg_recalc_cost_request_total; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_recalc_cost_request_total AFTER INSERT OR DELETE OR UPDATE ON public.cost_items FOR EACH ROW EXECUTE FUNCTION public.recalc_cost_request_total();
+
+--
+-- Name: trg_cost_requests_enforce; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_cost_requests_enforce BEFORE INSERT OR UPDATE ON public.cost_requests FOR EACH ROW EXECUTE FUNCTION public.cost_requests_enforce();
+
 
 --
 -- Name: assist_requests; Type: ROW SECURITY; Schema: public; Owner: -
@@ -797,6 +1272,138 @@ ALTER TABLE public.drive_items ENABLE ROW LEVEL SECURITY;
 CREATE POLICY drive_items_select_same_unit ON public.drive_items FOR SELECT USING ((EXISTS ( SELECT 1
    FROM public.memberships m
   WHERE ((m.user_id = auth.uid()) AND (m.org_id = drive_items.org_id) AND (m.unit_id = drive_items.unit_id)))));
+
+
+--
+-- Name: cost_types; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.cost_types ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: cost_types cost_types_select_org; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY cost_types_select_org ON public.cost_types FOR SELECT USING (public.is_org_member(org_id));
+
+--
+-- Name: cost_types cost_types_write_admin; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY cost_types_write_admin ON public.cost_types USING (public.is_org_role(org_id, ARRAY['manager'::public.role_type, 'admin'::public.role_type])) WITH CHECK (public.is_org_role(org_id, ARRAY['manager'::public.role_type, 'admin'::public.role_type]));
+
+--
+-- Name: cost_requests; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.cost_requests ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: cost_requests cost_requests_select_org; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY cost_requests_select_org ON public.cost_requests FOR SELECT USING ((public.is_org_role(org_id, ARRAY['manager'::public.role_type, 'admin'::public.role_type]) OR public.is_unit_member(org_id, unit_id)));
+
+--
+-- Name: cost_requests cost_requests_insert_unit; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY cost_requests_insert_unit ON public.cost_requests FOR INSERT WITH CHECK ((public.is_org_role(org_id, ARRAY['manager'::public.role_type, 'admin'::public.role_type]) OR (public.is_unit_member(org_id, unit_id) AND (status = ANY (ARRAY['draft'::text, 'submitted'::text])))));
+
+--
+-- Name: cost_requests cost_requests_update_unit; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY cost_requests_update_unit ON public.cost_requests FOR UPDATE USING ((public.is_org_role(org_id, ARRAY['manager'::public.role_type, 'admin'::public.role_type]) OR public.is_unit_member(org_id, unit_id))) WITH CHECK ((public.is_org_role(org_id, ARRAY['manager'::public.role_type, 'admin'::public.role_type]) OR (public.is_unit_member(org_id, unit_id) AND (status = ANY (ARRAY['draft'::text, 'submitted'::text])))));
+
+--
+-- Name: cost_requests cost_requests_delete_unit; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY cost_requests_delete_unit ON public.cost_requests FOR DELETE USING ((public.is_org_role(org_id, ARRAY['manager'::public.role_type, 'admin'::public.role_type]) OR (public.is_unit_member(org_id, unit_id) AND (status = ANY (ARRAY['draft'::text, 'submitted'::text])))));
+
+--
+-- Name: cost_items; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.cost_items ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: cost_items cost_items_select_org; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY cost_items_select_org ON public.cost_items FOR SELECT USING ((public.is_org_role(org_id, ARRAY['manager'::public.role_type, 'admin'::public.role_type]) OR public.is_unit_member(org_id, unit_id)));
+
+--
+-- Name: cost_items cost_items_write_unit; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY cost_items_write_unit ON public.cost_items FOR INSERT WITH CHECK ((public.is_org_role(org_id, ARRAY['manager'::public.role_type, 'admin'::public.role_type]) OR (public.is_unit_member(org_id, unit_id) AND (EXISTS ( SELECT 1
+   FROM public.cost_requests cr
+  WHERE ((cr.id = cost_items.cost_request_id) AND (cr.status = ANY (ARRAY['draft'::text, 'submitted'::text]))))))));
+
+--
+-- Name: cost_items cost_items_update_unit; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY cost_items_update_unit ON public.cost_items FOR UPDATE USING ((public.is_org_role(org_id, ARRAY['manager'::public.role_type, 'admin'::public.role_type]) OR (public.is_unit_member(org_id, unit_id) AND (EXISTS ( SELECT 1
+   FROM public.cost_requests cr
+  WHERE ((cr.id = cost_items.cost_request_id) AND (cr.status = ANY (ARRAY['draft'::text, 'submitted'::text])))))))) WITH CHECK ((public.is_org_role(org_id, ARRAY['manager'::public.role_type, 'admin'::public.role_type]) OR (public.is_unit_member(org_id, unit_id) AND (EXISTS ( SELECT 1
+   FROM public.cost_requests cr
+  WHERE ((cr.id = cost_items.cost_request_id) AND (cr.status = ANY (ARRAY['draft'::text, 'submitted'::text]))))))));
+
+--
+-- Name: cost_items cost_items_delete_unit; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY cost_items_delete_unit ON public.cost_items FOR DELETE USING ((public.is_org_role(org_id, ARRAY['manager'::public.role_type, 'admin'::public.role_type]) OR (public.is_unit_member(org_id, unit_id) AND (EXISTS ( SELECT 1
+   FROM public.cost_requests cr
+  WHERE ((cr.id = cost_items.cost_request_id) AND (cr.status = ANY (ARRAY['draft'::text, 'submitted'::text]))))))));
+
+--
+-- Name: cost_attachments; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.cost_attachments ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: cost_attachments cost_attachments_select_org; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY cost_attachments_select_org ON public.cost_attachments FOR SELECT USING ((public.is_org_role(org_id, ARRAY['manager'::public.role_type, 'admin'::public.role_type]) OR public.is_unit_member(org_id, unit_id)));
+
+--
+-- Name: cost_attachments cost_attachments_insert_unit; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY cost_attachments_insert_unit ON public.cost_attachments FOR INSERT WITH CHECK ((public.is_org_role(org_id, ARRAY['manager'::public.role_type, 'admin'::public.role_type]) OR (public.is_unit_member(org_id, unit_id) AND ((EXISTS ( SELECT 1
+   FROM public.cost_requests cr
+  WHERE ((cr.id = cost_attachments.cost_request_id) AND (cr.status = ANY (ARRAY['draft'::text, 'submitted'::text]))))) OR (EXISTS ( SELECT 1
+   FROM public.cost_items ci
+     JOIN public.cost_requests cr ON ((cr.id = ci.cost_request_id))
+  WHERE ((ci.id = cost_attachments.cost_item_id) AND (cr.status = ANY (ARRAY['draft'::text, 'submitted'::text])))))))));
+
+--
+-- Name: cost_attachments cost_attachments_update_unit; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY cost_attachments_update_unit ON public.cost_attachments FOR UPDATE USING ((public.is_org_role(org_id, ARRAY['manager'::public.role_type, 'admin'::public.role_type]) OR public.is_unit_member(org_id, unit_id))) WITH CHECK ((public.is_org_role(org_id, ARRAY['manager'::public.role_type, 'admin'::public.role_type]) OR (public.is_unit_member(org_id, unit_id) AND ((EXISTS ( SELECT 1
+   FROM public.cost_requests cr
+  WHERE ((cr.id = cost_attachments.cost_request_id) AND (cr.status = ANY (ARRAY['draft'::text, 'submitted'::text]))))) OR (EXISTS ( SELECT 1
+   FROM public.cost_items ci
+     JOIN public.cost_requests cr ON ((cr.id = ci.cost_request_id))
+  WHERE ((ci.id = cost_attachments.cost_item_id) AND (cr.status = ANY (ARRAY['draft'::text, 'submitted'::text])))))))));
+
+--
+-- Name: cost_attachments cost_attachments_delete_unit; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY cost_attachments_delete_unit ON public.cost_attachments FOR DELETE USING ((public.is_org_role(org_id, ARRAY['manager'::public.role_type, 'admin'::public.role_type]) OR (public.is_unit_member(org_id, unit_id) AND ((EXISTS ( SELECT 1
+   FROM public.cost_requests cr
+  WHERE ((cr.id = cost_attachments.cost_request_id) AND (cr.status = ANY (ARRAY['draft'::text, 'submitted'::text]))))) OR (EXISTS ( SELECT 1
+   FROM public.cost_items ci
+     JOIN public.cost_requests cr ON ((cr.id = ci.cost_request_id))
+  WHERE ((ci.id = cost_attachments.cost_item_id) AND (cr.status = ANY (ARRAY['draft'::text, 'submitted'::text])))))))));
 
 
 --
@@ -981,4 +1588,3 @@ CREATE POLICY units_select_member ON public.units FOR SELECT USING (public.is_or
 --
 
 \unrestrict D7HvhihTKNkVIl5FX8y5Pc4NR6xlUTAsDchc86VSLbMU9pyf7Lo2hcRk0bkCtWT
-

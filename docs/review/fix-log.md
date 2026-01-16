@@ -1,0 +1,18 @@
+## Unreleased
+- Consolidate duplicated code paths by removing the `/src` directory. The primary code source is now the project root, resolving inconsistencies between `/app` vs `/src/app` and `/lib` vs `/src/lib`. This change simplifies the project structure and eliminates a source of potential import confusion. (removed `/src` directory)
+- Fixed multiple TypeScript errors encountered after consolidating the code paths. These errors were pre-existing and were resolved through type-safe adjustments, including:
+  - Handling `null` assignment to `PostgrestFilterBuilder` in `app/admin/tasks/page.tsx`.
+  - Adding `null` checks for `tasks` array before `map` operation in `app/admin/tasks/page.tsx`.
+  - Explicitly typing `row` parameter in `forEach` loop in `app/admin/users/page.tsx` to resolve implicit `any` error.
+  - Adding `seq` property to `TaskRow` type and including `seq` in Supabase select query in `app/dashboard/page.tsx`.
+  - Adding `null` checks for `dragState` in `onMove` and `onUp` functions in `app/projects/[id]/ProjectWorkspace.tsx`.
+  - Correcting event handler types (MouseEvent to PointerEvent, HTMLSpanElement to HTMLElement) in `app/projects/[id]/ProjectWorkspace.tsx`.
+  - Adding non-null assertion for `flagManager.taskId` in `app/projects/[id]/ProjectWorkspace.tsx`.
+  - Adding `null` checks for `request` object in `handleAddAttachment` and within JSX in `app/projects/[id]/costs/CostRequestDetailDrawer.tsx`.
+  - Updating `AssistRow` type definition to include nested `project_tasks` array and correcting access to `name` and `code` properties in `app/settings/page.tsx`.
+  - Implementing `getAll` and `setAll` methods in `utils/supabase/updateSession.ts` and adjusting `CookieOptions` type to conform to `@supabase/ssr`'s `CookieMethodsServer` interface.
+- Fix issue where a failed task creation would still add a local-only task to the UI. The logic is now corrected to show an error message without altering the UI state. Also replaced the local-only activity log with a persistent version fetched from `progress_logs`, including user details. (`app/projects/[id]/ProjectWorkspace.tsx`, `app/projects/[id]/actions.ts`)
+- Synchronize `db_schema.txt` with the current database migrations, adding `activity_logs`, `device_allowlist`, `task_change_logs`, and several RPC functions. A new script `scripts/update_db_schema.sh` has been created to automate future updates. (`db_schema.txt`, `scripts/update_db_schema.sh`, `docs/db/README.md`)
+- Fix cross-unit drive access by validating task org/unit membership and reusing shared guard. (`lib/guards/ensureTaskAccess.ts`, `app/api/drive/upload/route.ts`, `app/api/drive/delete/route.ts`, `app/api/drive/thumbnail/route.ts`, `app/projects/[id]/page.tsx`, `lib/permissions.ts`)
+- Add drive_items integrity migration, quarantine table, and backfill script to sync org/unit with project_tasks; mismatches are quarantined. (`docs/db/drive-items-integrity.sql`, `scripts/backfill_drive_items.sql`)
+- Enable device allowlist by wiring Next.js middleware to update sessions, enforce device checks on /api, and log blocked devices. (`middleware.ts`, `utils/supabase/updateSession.ts`, `proxy.ts`)

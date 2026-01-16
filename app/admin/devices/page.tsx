@@ -60,13 +60,44 @@ async function approveDeviceAction(formData: FormData) {
   }
 
   const admin = createAdminSupabase();
-  const isPlatformAdmin = isPlatformAdminFromAccessToken(sessionData.session?.access_token);
+  const isPlatformAdmin = isPlatformAdminFromAccessToken(
+    sessionData.session?.access_token
+  );
+
+  // non-platform admin must be scoped to their org
   const orgId = isPlatformAdmin ? null : await getLatestUserOrgId(admin, user.id);
-  const allowed = isPlatformAdmin || await checkPermission(admin, user.id, orgId, "devices", "update");
+
+  const allowed =
+    isPlatformAdmin ||
+    (await checkPermission(admin, user.id, orgId, "devices", "update"));
+
   if (!allowed) {
     redirect("/admin/devices?error=permission_denied");
   }
-  const { error } = await admin
+
+  // 1) load row org_id from DB (source of truth)
+  const { data: row, error: loadErr } = await admin
+    .from("device_allowlist")
+    .select("id, org_id")
+    .eq("id", deviceId)
+    .single();
+
+  if (loadErr || !row) {
+    redirect("/admin/devices?error=device_not_found");
+  }
+
+  // 2) enforce org boundary for non-platform admin
+  if (!isPlatformAdmin) {
+    if (!orgId) {
+      redirect("/admin/devices?error=org_not_resolved");
+    }
+    if (row.org_id !== orgId) {
+      redirect("/admin/devices?error=forbidden");
+    }
+  }
+
+  // 3) update with scoped condition
+  const updateQuery = admin
     .from("device_allowlist")
     .update({
       approved: true,
@@ -75,8 +106,12 @@ async function approveDeviceAction(formData: FormData) {
     })
     .eq("id", deviceId);
 
-  if (error) {
-    redirect(`/admin/devices?error=${encodeURIComponent(error.message)}`);
+  const { error: updateErr } = isPlatformAdmin
+    ? await updateQuery
+    : await updateQuery.eq("org_id", orgId);
+
+  if (updateErr) {
+    redirect(`/admin/devices?error=${encodeURIComponent(updateErr.message)}`);
   }
 
   redirect("/admin/devices?ok=approved");
@@ -99,13 +134,44 @@ async function revokeDeviceAction(formData: FormData) {
   }
 
   const admin = createAdminSupabase();
-  const isPlatformAdmin = isPlatformAdminFromAccessToken(sessionData.session?.access_token);
+  const isPlatformAdmin = isPlatformAdminFromAccessToken(
+    sessionData.session?.access_token
+  );
+
+  // 1) load row org_id from DB (source of truth)
+  const { data: row, error: loadErr } = await admin
+    .from("device_allowlist")
+    .select("id, org_id")
+    .eq("id", deviceId)
+    .single();
+
+  if (loadErr || !row) {
+    redirect("/admin/devices?error=device_not_found");
+  }
+
+  // non-platform admin must be scoped to their org
   const orgId = isPlatformAdmin ? null : await getLatestUserOrgId(admin, user.id);
-  const allowed = isPlatformAdmin || await checkPermission(admin, user.id, orgId, "devices", "update");
+
+  // 2) enforce org boundary for non-platform admin
+  if (!isPlatformAdmin) {
+    if (!orgId) {
+      redirect("/admin/devices?error=org_not_resolved");
+    }
+    if (row.org_id !== orgId) {
+      redirect("/admin/devices?error=forbidden");
+    }
+  }
+
+  const allowed =
+    isPlatformAdmin ||
+    (await checkPermission(admin, user.id, orgId, "devices", "update"));
+
   if (!allowed) {
     redirect("/admin/devices?error=permission_denied");
   }
-  const { error } = await admin
+
+  // 3) update with scoped condition
+  const updateQuery = admin
     .from("device_allowlist")
     .update({
       approved: false,
@@ -113,9 +179,14 @@ async function revokeDeviceAction(formData: FormData) {
       approved_by: null,
     })
     .eq("id", deviceId);
+    
+  const { error: updateErr } = isPlatformAdmin
+    ? await updateQuery
+    : await updateQuery.eq("org_id", orgId);
 
-  if (error) {
-    redirect(`/admin/devices?error=${encodeURIComponent(error.message)}`);
+
+  if (updateErr) {
+    redirect(`/admin/devices?error=${encodeURIComponent(updateErr.message)}`);
   }
 
   redirect("/admin/devices?ok=revoked");

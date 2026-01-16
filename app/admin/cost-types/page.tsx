@@ -81,30 +81,50 @@ async function updateCostTypeAction(formData: FormData) {
   const isPlatformAdmin = isPlatformAdminFromAccessToken(sessionData.session?.access_token);
 
   const id = String(formData.get("id") ?? "").trim();
-  const orgId = String(formData.get("org_id") ?? "").trim();
   const name = String(formData.get("name") ?? "").trim();
   const active = formData.get("active") === "on";
-  if (!id || !orgId || !name) {
-    redirect(`/admin/cost-types?error=${encodeMsg("cost type id, name, and org are required")}`);
+  if (!id || !name) {
+    redirect(`/admin/cost-types?error=${encodeMsg("cost type id and name are required")}`);
   }
 
   const adminClient = createAdminSupabase();
+
+  // 1) load row org_id from DB (source of truth)
+  const { data: row, error: loadErr } = await adminClient
+    .from("cost_types")
+    .select("id, org_id")
+    .eq("id", id)
+    .single();
+
+  if (loadErr || !row) {
+    redirect(`/admin/cost-types?error=${encodeMsg("cost_type_not_found")}`);
+  }
+
+  const orgId = row.org_id; // Use org_id from DB
   const userOrgId = isPlatformAdmin ? null : await getLatestUserOrgId(adminClient, user.id);
+
   if (!isPlatformAdmin && (!userOrgId || orgId !== userOrgId)) {
     redirect(`/admin/cost-types?error=${encodeMsg("permission_denied")}`);
   }
-  const allowed = isPlatformAdmin || await checkPermission(adminClient, user.id, orgId, "cost_types", "update");
+  const allowed =
+    isPlatformAdmin ||
+    (await checkPermission(adminClient, user.id, orgId, "cost_types", "update"));
+
   if (!allowed) {
     redirect(`/admin/cost-types?error=${encodeMsg("permission_denied")}`);
   }
 
-  const { error } = await adminClient
+  // 2) scope update by BOTH id and org_id
+  const { error: updateErr } = await adminClient
     .from("cost_types")
     .update({ name, active })
-    .eq("id", id);
-  if (error) {
-    redirect(`/admin/cost-types?error=${encodeMsg(error.message)}`);
+    .eq("id", id)
+    .eq("org_id", orgId);
+
+  if (updateErr) {
+    redirect(`/admin/cost-types?error=${encodeMsg(updateErr.message)}`);
   }
+
   redirect(`/admin/cost-types?ok=updated`);
 }
 

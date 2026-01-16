@@ -4,7 +4,7 @@ import { Readable } from "stream";
 import sharp from "sharp";
 import { createServerSupabase } from "@/lib/supabase/server";
 import { createAdminSupabase } from "@/lib/supabase/admin";
-import { checkPermission } from "@/lib/permissions";
+import { checkPermission, verifyMembership } from "@/lib/permissions";
 import { isPlatformAdminFromAccessToken } from "@/lib/auth";
 import { ensureTaskAccess } from "@/lib/guards/ensureTaskAccess";
 
@@ -131,10 +131,11 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: false, error: taskAccess.error }, { status: taskAccess.status });
   }
 
-  const allowed = isPlatformAdmin
-    || await checkPermission(admin, authData.user.id, taskAccess.task.org_id, "files", "create");
-  if (!allowed) {
-    return NextResponse.json({ ok: false, error: "permission_denied" }, { status: 403 });
+  if (!isPlatformAdmin) {
+    const isMember = await verifyMembership(admin, authData.user.id, taskAccess.task.org_id);
+    if (!isMember) {
+      return NextResponse.json({ ok: false, error: "forbidden" }, { status: 403 });
+    }
   }
 
   const inputBuffer: Buffer = Buffer.from(await file.arrayBuffer());

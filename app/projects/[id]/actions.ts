@@ -403,3 +403,50 @@ export async function createProjectTask(opts: {
 
   return { ok: true as const, task: inserted };
 }
+
+export async function getTaskLogs(taskId: string) {
+  const supabase = await createServerSupabase();
+  const { data: ures, error: uerr } = await supabase.auth.getUser();
+  if (uerr || !ures.user) {
+    return { ok: false, error: "not_authenticated" };
+  }
+
+  // NOTE: Use admin client to bypass RLS for reading logs across users within the project.
+  // This assumes that anyone who can view the task can view its history.
+  // Permissions are checked at the component level before calling this action.
+  const adminClient = createAdminSupabase();
+
+  const { data, error } = await adminClient
+    .from("progress_logs")
+    .select(
+      `
+      id,
+      created_at,
+      progress,
+      note,
+      user:profiles(display_name)
+    `
+    )
+    .eq("project_task_id", taskId)
+    .order("created_at", { ascending: false });
+
+  if (error) {
+    return { ok: false, error: error.message };
+  }
+
+  const logs = data.map((log: {
+    id: string;
+    created_at: string;
+    progress: number;
+    note: string | null;
+    user: { display_name: string }[] | null;
+  }) => ({
+    id: log.id,
+    time: log.created_at,
+    note: log.note,
+    progress: log.progress,
+    user_name: log.user?.[0]?.display_name ?? "系統",
+  }));
+
+  return { ok: true, logs };
+}

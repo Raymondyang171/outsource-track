@@ -395,16 +395,17 @@ export default async function AdminTasksPage({
     if (!isPlatformAdmin && orgId) {
       driveQuery = driveQuery.eq("org_id", orgId);
     }
+    let executeQuery = true;
     if (allowedUnitIds) {
       if (allowedUnitIds.length === 0) {
         driveItems = [];
         driveErr = { message: "permission_denied" };
-        driveQuery = null;
+        executeQuery = false;
       } else {
         driveQuery = driveQuery.in("unit_id", allowedUnitIds);
       }
     }
-    if (driveQuery) {
+    if (executeQuery) {
       const { data: driveList, error: driveError } = await driveQuery;
       driveItems = driveList ?? [];
       if (driveError) {
@@ -681,7 +682,7 @@ export default async function AdminTasksPage({
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-          {tasks.map((t) => (
+          {tasks?.map((t) => (
                 <tr key={t.id} className="hover:bg-slate-50 transition-colors group">
                   <td className="px-6 py-4">
                     <div className="font-medium text-slate-900 flex items-center gap-2">

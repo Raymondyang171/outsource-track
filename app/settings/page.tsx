@@ -34,10 +34,7 @@ type AssistRow = {
   note: string | null;
   created_at: string;
   updated_at: string;
-  project_tasks?: {
-    name: string;
-    code: string | null;
-  } | null;
+  project_tasks: Array<{ name: string; code: string | null }>;
 };
 
 type TaskItem = {
@@ -248,8 +245,8 @@ export default async function SettingsPage({
 
   const assistItems: TaskItem[] = assistRows.map((assist) => {
     const project = projectById[assist.project_id] as ProjectRow | undefined;
-    const assistTaskName = assist.project_tasks?.name;
-    const assistTaskCode = assist.project_tasks?.code ? `[${assist.project_tasks.code}] ` : "";
+    const assistTaskName = assist.project_tasks?.[0]?.name;
+    const assistTaskCode = assist.project_tasks?.[0]?.code ? `[${assist.project_tasks?.[0]?.code}] ` : "";
     const title = assistTaskName
       ? `${assistTaskCode}${assistTaskName}`.trim()
       : assist.note

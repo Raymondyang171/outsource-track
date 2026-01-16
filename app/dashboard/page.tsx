@@ -34,6 +34,7 @@ type TaskRow = {
   start_offset_days: number;
   owner_unit_id: string | null;
   updated_at: string;
+  seq: number;
 };
 
 type LogRow = {
@@ -181,7 +182,7 @@ export default async function DashboardPage({
     ? await dataClient
         .from("project_tasks")
         .select(
-          "id, project_id, phase_name, code, name, progress, duration_days, start_offset_days, owner_unit_id, updated_at"
+          "id, project_id, phase_name, code, name, progress, duration_days, start_offset_days, owner_unit_id, updated_at, seq"
         )
         .in("project_id", allProjectIds)
         .order("seq", { ascending: true })

@@ -44,7 +44,7 @@ async function resolveBestRole(admin: any, userId: string, orgId?: string | null
   const { data } = await query;
   let best: string | null = null;
   let bestRank = -1;
-  (data ?? []).forEach((row) => {
+  (data ?? []).forEach((row: { role: string | null }) => {
     const role = String(row.role ?? "").trim();
     if (!role) return;
     const rank = roleRank[role] ?? 0;

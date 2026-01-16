@@ -93,6 +93,7 @@ export default function CostRequestDetailDrawer(props: Props) {
   }
 
   function handleAddAttachment() {
+    if (!request) return;
     if (!fileName.trim()) return;
     props.onAddAttachment(request, {
       cost_item_id: linkItemId || null,
@@ -126,7 +127,7 @@ export default function CostRequestDetailDrawer(props: Props) {
           </Button>
         </div>
 
-        {!props.request ? (
+        {!request ? (
           <div className="p-6 text-sm text-slate-500">尚未選取請款單。</div>
         ) : (
           <div className="space-y-4 p-6">

@@ -8,7 +8,18 @@
 - P2: 模板系統與部分欄位（projects.template_id/created_by 等）未被程式使用。(`db_schema.txt`#L436, `app/admin/projects/page.tsx`#L38)
 
 ## 權限矩陣
-- super_admin（軟體公司帳號）：以 `memberships` 為唯一依據，必須在 `org_id = PLATFORM_SUPER_ADMIN_ORG_ID` 且 `role = admin` 才成立；可跨 org/unit 讀寫，但仍需任務存在與 drive item org/unit 一致性驗證。
+
+### Super Admin
+- **策略**: 以 `memberships` 為唯一依據，必須在 `org_id = PLATFORM_SUPER_ADMIN_ORG_ID` 且 `role = admin` 才成立。
+- **權限**: 可跨 org/unit 讀寫，但 API 層級的 `ensureTaskAccess` guard 仍會驗證目標任務是否存在，以及 `drive_items` 的 `org_id` 和 `unit_id` 是否與其所屬任務一致，以確保資料完整性。
+
+### Google Drive 檔案存取權限 (drive_items)
+| 角色 | 操作 | 範圍 | 條件 / Guard |
+| :--- | :--- | :--- | :--- |
+| **Unit Member** | `Upload` / `Delete` / `Read` | 同單位 | `ensureTaskAccess` 驗證 `taskId` 存在且使用者為該 `task.unit_id` 成員 |
+| **Unit Member** | `Upload` / `Delete` / `Read` | **跨單位** | **禁止 (403 Forbidden)** |
+| **Org Admin** | `Upload` / `Delete` / `Read` | 同組織 | `ensureTaskAccess` 驗證 `taskId` 存在且使用者為該 `task.org_id` 的 `admin` |
+| **Super Admin** | `Upload` / `Delete` / `Read` | 全平台 | `ensureTaskAccess` 驗證 `taskId` 存在 |
 
 ## Risk Map
 - P0: 未發現。
@@ -36,3 +47,29 @@
 
 ## 最優解修復順序
 P0/P1（安全與資料正確性） → UI 假動作與資料一致性 → 效能/瘦身/重構。
+
+## 跨單位檔案存取修補驗收 (Acceptance)
+
+### 1. Smoke Test
+此修補包含一個自動化 smoke test，用於驗證權限規則是否正確執行。
+
+- **腳本位置**: `scripts/security-smoke-drive-access.js`
+- **執行方式**:
+  ```bash
+  # 執行前請確保 .env.local 中有正確的 Supabase URL 與 anon key
+  # 腳本會使用 gm@green-demo.com 和 a1@green-demo.com 帳號
+  pnpm smoke-test:drive
+  ```
+- **預期結果**:
+  - 腳本應成功執行完畢，並在最後顯示 `Smoke test passed successfully.`。
+  - 測試摘要應顯示所有測試案例均為 `✅ PASS`。
+  - 任何 `❌ FAIL` 均表示權限控制有回歸 (regression) 或設定錯誤。
+
+### 2. 資料庫完整性驗證
+DB migration 已包含 trigger，用以強制 `drive_items` 的 `org_id` 和 `unit_id` 與其所屬的 `project_tasks` 同步。若有因 backfill 失敗或歷史資料問題被隔離的項目，可執行以下報表來檢視。
+
+- **驗證報表**: `docs/db/drive_items_quarantine_report.sql`
+- **執行方式**: 將上述 SQL 檔案內容貼到 Supabase SQL Editor 執行。
+- **預期結果**:
+  - 在正常情況下，`drive_items_quarantine` 表應為空。
+  - 若有項目，可根據 `quarantine_reason` 欄位進行問題排查。

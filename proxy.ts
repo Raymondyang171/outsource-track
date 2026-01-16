@@ -1,2 +1,12 @@
-// Deprecated: Next.js uses middleware.ts. Keep for references only.
-export { middleware as proxy, config } from "./middleware";
+import { type NextRequest } from "next/server";
+import { updateSession } from "./utils/supabase/updateSession";
+
+export async function proxy(request: NextRequest) {
+  return updateSession(request);
+}
+
+export const config = {
+  matcher: [
+    "/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
+  ],
+};

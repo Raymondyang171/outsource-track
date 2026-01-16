@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
-import { createProjectTask, updateTaskAssignees, updateTaskProgress, updateTaskSchedule } from "./actions";
+import { createProjectTask, getTaskLogs, updateTaskAssignees, updateTaskProgress, updateTaskSchedule } from "./actions";
 
 type Project = {
   id: string;
@@ -140,7 +140,6 @@ export default function ProjectWorkspace({
     open: false,
     taskId: null,
   });
-  const [notesByTask, setNotesByTask] = useState<Record<string, string>>({});
   const [thumbReady, setThumbReady] = useState<Record<string, boolean>>({});
   const [flagMenu, setFlagMenu] = useState<{
     taskId: string;
@@ -226,14 +225,23 @@ export default function ProjectWorkspace({
     };
   }
 
+  const [isLogPending, startLogTransition] = useTransition();
+
   const initialTasks = tasks.length > 0 ? tasks.map((task) => normalizeTask(task)) : [];
   const [localTasks, setLocalTasks] = useState<Task[]>(initialTasks);
   const [filesByTask, setFilesByTask] = useState<Record<string, FileItem[]>>(
     () => groupDriveItems(driveItems)
   );
-  const [logsByTask, setLogsByTask] = useState<
-    Record<string, Array<{ time: string; note: string; progress: number }>>
-  >({});
+
+  type ActivityLog = {
+    id: string;
+    time: string;
+    note: string | null;
+    progress: number;
+    user_name: string;
+  };
+
+  const [activityLogs, setActivityLogs] = useState<ActivityLog[]>([]);
   const tasksRef = useRef<Task[]>(localTasks);
 
   useEffect(() => {
@@ -269,12 +277,22 @@ export default function ProjectWorkspace({
     setSubtaskMsg("");
     setNote("");
     setMessage("");
+    setActivityLogs([]);
+
+    startLogTransition(async () => {
+      // Defer fetching logs
+      const res = await getTaskLogs(selectedTask.id);
+      if (res.ok) {
+        setActivityLogs(res.logs ?? []);
+      }
+    });
   }, [selectedTask]);
 
   const { phaseEntries, childCount } = useMemo(() => {
     const rootsByPhase = new Map<string, Task[]>();
     const byParent = new Map<string, Task[]>();
     const childCounter = new Map<string, number>();
+
 
     localTasks.forEach((task) => {
       if (task.parent_id) {
@@ -450,7 +468,7 @@ export default function ProjectWorkspace({
   function beginDrag(
     task: Task,
     type: "move" | "resize-left" | "resize-right",
-    event: ReactPointerEvent<HTMLDivElement>
+    event: ReactPointerEvent<HTMLElement>
   ) {
     if (isViewer) return;
     if (event.button !== 0) return;
@@ -473,6 +491,7 @@ export default function ProjectWorkspace({
     const dragThreshold = 10;
 
     function onMove(event: PointerEvent) {
+      if (!dragState) return;
       if (dragState.pointerId !== null && event.pointerId !== dragState.pointerId) {
         return;
       }
@@ -508,6 +527,7 @@ export default function ProjectWorkspace({
     }
 
     function onUp(event: PointerEvent) {
+      if (!dragState) return;
       if (dragState.pointerId !== null && event.pointerId !== dragState.pointerId) {
         return;
       }
@@ -552,18 +572,10 @@ export default function ProjectWorkspace({
     }
   }
 
-  function addLog(taskId: string, noteText: string, value: number) {
-    const time = new Date().toLocaleString();
-    setLogsByTask((prev) => ({
-      ...prev,
-      [taskId]: [{ time, note: noteText || "進度更新", progress: value }, ...(prev[taskId] ?? [])],
-    }));
-  }
-
   async function saveAssignees() {
     if (!selectedTask) return;
     setAssigneeMsg("");
-    const res: any = await updateTaskAssignees({
+    const res = await updateTaskAssignees({
       task_id: selectedTask.id,
       owner_unit_id: assigneeUnitId || null,
       owner_user_id: assigneeUserId || null,
@@ -626,7 +638,7 @@ export default function ProjectWorkspace({
     }
 
     startCreate(async () => {
-      const res: any = await createProjectTask({
+      const res = await createProjectTask({
         project_id: project.id,
         org_id: project.org_id,
         unit_id: project.unit_id,
@@ -637,25 +649,7 @@ export default function ProjectWorkspace({
       });
 
       if (!res?.ok) {
-        const fallback: Task = {
-          id: `local-${Date.now()}`,
-          seq: localTasks.length + 1,
-          phase_name: createPhase.trim() || "新任務",
-          code: null,
-          name: createName.trim(),
-          progress: 0,
-          duration_days: Math.max(1, createDuration),
-          start_offset_days: Math.max(0, createStartIndex),
-          owner_unit_id: null,
-          owner_user_id: null,
-          status: "ready",
-          parent_id: null,
-          level: 0,
-        };
-        setLocalTasks((prev) => [...prev, fallback]);
-        setCreateMsg(`新增失敗，先以本地任務顯示：${res?.error ?? "unknown"}`);
-        setCreateName("");
-        setCreateOpen(false);
+        setCreateMsg(`新增失敗：${res?.error ?? "unknown"}`);
         return;
       }
 
@@ -700,7 +694,7 @@ export default function ProjectWorkspace({
     setLocalTasks((prev) => [...prev, fallback]);
     setSubtaskName("");
     setSubtaskDuration(Math.max(1, selectedTask.duration_days));
-    setSubtaskOffset(selectedTask.start_offset_days);
+    setSubtaskStartIndex(selectedTask.start_offset_days);
     setSubtaskMsg("已新增");
   }
 
@@ -716,7 +710,7 @@ export default function ProjectWorkspace({
     setFlagManager({ open: false, taskId: null });
   }
 
-  function openFlagMenu(task: Task, event: ReactPointerEvent<HTMLDivElement>) {
+  function openFlagMenu(task: Task, event: React.MouseEvent<HTMLDivElement>) {
     event.preventDefault();
     event.stopPropagation();
     const rect = event.currentTarget.getBoundingClientRect();
@@ -765,7 +759,7 @@ export default function ProjectWorkspace({
     setMessage("");
     startTransition(async () => {
       const value = Math.max(0, Math.min(100, Number(progress)));
-      const res: any = await updateTaskProgress({
+      const res = await updateTaskProgress({
         task_id: selectedTask.id,
         progress: value,
         note,
@@ -791,11 +785,15 @@ export default function ProjectWorkspace({
             : task
         )
       );
-      setNotesByTask((prev) => ({
-        ...prev,
-        [selectedTask.id]: note.trim() ? note.trim() : "進度更新",
-      }));
-      addLog(selectedTask.id, note, value);
+
+      const newLog: ActivityLog = {
+        id: `local-log-${Date.now()}`,
+        time: new Date().toISOString(),
+        note: note.trim() || "進度更新",
+        progress: value,
+        user_name: "我", // Optimistic update uses a generic name
+      };
+      setActivityLogs(prev => [newLog, ...prev]);
     });
   }
 
@@ -1208,7 +1206,7 @@ export default function ProjectWorkspace({
                           <button
                             className="btn btn-ghost"
                             type="button"
-                            onClick={() => deleteFlag(flagManager.taskId, flag.id)}
+                            onClick={() => deleteFlag(flagManager.taskId!, flag.id)}
                           >
                             刪除
                           </button>
@@ -1574,14 +1572,15 @@ export default function ProjectWorkspace({
                     <div className="card-header">
                       <div className="card-title">活動紀錄</div>
                     </div>
-                    {(logsByTask[selectedTask.id] ?? []).length === 0 && (
+                    {isLogPending && <div className="page-subtitle">讀取紀錄中...</div>}
+                    {!isLogPending && activityLogs.length === 0 && (
                       <div className="page-subtitle">尚無更新紀錄</div>
                     )}
-                    {(logsByTask[selectedTask.id] ?? []).map((log, index) => (
-                      <div className="task-card" key={`${log.time}-${index}`}>
-                        <div>{log.note}</div>
+                    {activityLogs.map((log) => (
+                      <div className="task-card" key={log.id}>
+                        <div>{log.note || "進度更新"}</div>
                         <div className="page-subtitle">
-                          {log.time} ・{log.progress}%
+                          {formatDateString(log.time)} ・ {log.user_name} ・ {log.progress}%
                         </div>
                       </div>
                     ))}

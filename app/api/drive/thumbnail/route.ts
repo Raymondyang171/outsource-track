@@ -71,13 +71,6 @@ export async function GET(request: Request) {
     return NextResponse.json({ ok: false, error: taskAccess.error }, { status: taskAccess.status });
   }
 
-  if (!isPlatformAdmin) {
-    const allowed = await checkPermission(admin, authData.user.id, taskAccess.task.org_id, "files", "read");
-    if (!allowed) {
-      return NextResponse.json({ ok: false, error: "permission_denied" }, { status: 403 });
-    }
-  }
-
   const oauth = getOAuthClient();
   if (!oauth) {
     return NextResponse.json({ ok: false, error: "missing_google_oauth" }, { status: 500 });

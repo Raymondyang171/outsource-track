@@ -181,6 +181,28 @@ export async function isServerSuperAdmin(client: SupabaseClient, userId: string)
   return data.some((row) => normalizeRole(row.role) === "admin");
 }
 
+export async function verifyMembership(
+  client: SupabaseClient,
+  userId: string,
+  orgId: string | null | undefined
+): Promise<boolean> {
+  if (!orgId) return false;
+
+  const { data, error } = await client
+    .from("memberships")
+    .select("user_id")
+    .eq("user_id", userId)
+    .eq("org_id", orgId)
+    .limit(1);
+
+  if (error) {
+    console.error("Error verifying membership:", error);
+    return false;
+  }
+
+  return data && data.length > 0;
+}
+
 export async function getPermissionsForResource(
   admin: SupabaseClient,
   userId: string,

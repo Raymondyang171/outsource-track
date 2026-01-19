@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createBrowserClientClient } from "@/lib/supabase/browser";
+import { safeFetch } from "@/lib/api-client";
 
 export default function LoginPage() {
   const supabase = createBrowserClientClient();
@@ -80,11 +81,10 @@ export default function LoginPage() {
           const blob = new Blob([body], { type: "application/json" });
           navigator.sendBeacon("/api/logs", blob);
         } else {
-          await fetch("/api/logs", {
+          await safeFetch("/api/logs", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body,
-            keepalive: true,
           });
         }
       } catch {

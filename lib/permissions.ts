@@ -29,7 +29,7 @@ export const resources = [
 type RoleId = string;
 type ResourceId = (typeof resources)[number];
 
-const roleRank: Record<string, number> = {
+export const roleRank: Record<string, number> = {
   viewer: 0,
   member: 1,
   manager: 2,

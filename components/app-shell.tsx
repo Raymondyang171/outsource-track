@@ -7,6 +7,7 @@ import LogoutButton from "@/components/logout-button";
 import SidebarToggle from "@/components/sidebar-toggle";
 import { createBrowserClientClient } from "@/lib/supabase/browser";
 import { isPlatformAdminFromAccessToken } from "@/lib/auth";
+import { safeFetch } from "@/lib/api-client";
 
 type AppShellProps = {
   children: React.ReactNode;
@@ -32,7 +33,18 @@ export default function AppShell({
   const [clientIsPlatformAdmin, setClientIsPlatformAdmin] = useState(isPlatformAdmin);
   const [clientNavPerms, setClientNavPerms] = useState(navPermissions);
   const [clientRole, setClientRole] = useState<string | null>(null);
-  const userLabel = clientUserEmail ?? "未登入";
+  const [clientOrgName, setClientOrgName] = useState<string | null>(null);
+  const [clientOrgLogoUrl, setClientOrgLogoUrl] = useState<string | null>(null);
+  const [clientDisplayName, setClientDisplayName] = useState<string | null>(null);
+  const [clientJobTitle, setClientJobTitle] = useState<string | null>(null);
+  const [clientUnitName, setClientUnitName] = useState<string | null>(null);
+  const resolvedUnitName = clientUnitName ?? "未指派部門";
+  const resolvedDisplayName = clientDisplayName ?? "使用者";
+  const resolvedJobTitle = clientJobTitle ?? "未設定職稱";
+  const userLabel =
+    authState === "authed"
+      ? `${resolvedUnitName}-${resolvedDisplayName}-${resolvedJobTitle}`
+      : "未登入";
   const logoutTimerRef = useRef<number | null>(null);
   const canRead = (resource: string) =>
     clientIsPlatformAdmin || (clientNavPerms ? clientNavPerms[resource] === true : false);
@@ -212,7 +224,7 @@ export default function AppShell({
     let cancelled = false;
     const syncPermissions = async () => {
       try {
-        const response = await fetch("/api/permissions");
+        const response = await safeFetch("/api/permissions");
         const data = await response.json();
         if (!cancelled && response.ok && data?.permissions) {
           setClientNavPerms(data.permissions);
@@ -222,6 +234,90 @@ export default function AppShell({
       }
     };
     void syncPermissions();
+    return () => {
+      cancelled = true;
+    };
+  }, [authState, isLoginRoute]);
+
+  useEffect(() => {
+    if (isLoginRoute) return;
+    if (authState !== "authed") {
+      setClientOrgName(null);
+      setClientOrgLogoUrl(null);
+      setClientDisplayName(null);
+      setClientJobTitle(null);
+      setClientUnitName(null);
+      return;
+    }
+
+    let cancelled = false;
+    const supabase = createBrowserClientClient();
+
+    const loadProfileContext = async () => {
+      const { data: userData } = await supabase.auth.getUser();
+      const userId = userData.user?.id;
+      if (!userId || cancelled) return;
+
+      const { data: membershipRows } = await supabase
+        .from("memberships")
+        .select("org_id, unit_id, role, created_at")
+        .eq("user_id", userId)
+        .order("created_at", { ascending: false })
+        .limit(1);
+      const membership = membershipRows?.[0];
+
+      if (membership?.org_id) {
+        const { data: orgRow } = await supabase
+          .from("orgs")
+          .select("id, name, logo_url")
+          .eq("id", membership.org_id)
+          .maybeSingle();
+        if (!cancelled) {
+          setClientOrgName(orgRow?.name ?? null);
+          setClientOrgLogoUrl(orgRow?.logo_url ?? null);
+        }
+      } else if (!cancelled) {
+        setClientOrgName(null);
+        setClientOrgLogoUrl(null);
+      }
+
+      if (membership?.unit_id) {
+        const { data: unitRow } = await supabase
+          .from("units")
+          .select("id, name")
+          .eq("id", membership.unit_id)
+          .maybeSingle();
+        if (!cancelled) {
+          setClientUnitName(unitRow?.name ?? null);
+        }
+      } else if (!cancelled) {
+        setClientUnitName(null);
+      }
+
+      const { data: profileRow } = await supabase
+        .from("profiles")
+        .select("display_name, job_title_id")
+        .eq("user_id", userId)
+        .maybeSingle();
+      if (!cancelled) {
+        setClientDisplayName(profileRow?.display_name ?? null);
+      }
+
+      if (profileRow?.job_title_id) {
+        const { data: titleRow } = await supabase
+          .from("job_titles")
+          .select("name")
+          .eq("id", profileRow.job_title_id)
+          .maybeSingle();
+        if (!cancelled) {
+          setClientJobTitle(titleRow?.name ?? null);
+        }
+      } else if (!cancelled) {
+        setClientJobTitle(null);
+      }
+    };
+
+    void loadProfileContext();
     return () => {
       cancelled = true;
     };
@@ -262,11 +358,10 @@ export default function AppShell({
           navigator.sendBeacon("/api/logs", blob);
           return;
         }
-        void fetch("/api/logs", {
+        void safeFetch("/api/logs", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body,
-          keepalive: true,
         });
       } catch {
         // ignore logging failures
@@ -408,10 +503,20 @@ export default function AppShell({
   const sidebarContent = (
     <div className="sidebar-content">
       <div className="sidebar-brand">
-        <div className="brand-mark">OT</div>
+        <div className="brand-mark">
+          {clientOrgLogoUrl ? (
+            <img
+              src={clientOrgLogoUrl}
+              alt={clientOrgName ? `${clientOrgName} logo` : "org logo"}
+              style={{ width: 36, height: 36, objectFit: "contain" }}
+            />
+          ) : (
+            <span>{clientOrgName?.[0]?.toUpperCase() ?? "OT"}</span>
+          )}
+        </div>
         <div>
-          <div>Outsource Track</div>
-          <div className="sidebar-meta">Asana-style workspace</div>
+          <div>{clientOrgName ?? "未設定公司"}</div>
+          <div className="sidebar-meta">公司空間</div>
         </div>
       </div>
 
@@ -439,7 +544,7 @@ export default function AppShell({
   return (
     <div className="app-shell">
       <aside className="app-sidebar">
-        <div className="sidebar-mini">OT</div>
+        <div className="sidebar-mini">{clientOrgName?.[0]?.toUpperCase() ?? "OT"}</div>
         {sidebarContent}
         <SidebarToggle />
       </aside>

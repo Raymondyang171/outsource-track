@@ -5,45 +5,9 @@ import { checkPermission, getPermissionsForResource } from "@/lib/permissions";
 import { isPlatformAdminFromAccessToken } from "@/lib/auth";
 import { getLatestUserOrgId } from "@/lib/org";
 import ConfirmForm from "@/components/confirm-form";
+import ProjectForm from "@/components/admin/project-form";
 
 export const dynamic = "force-dynamic";
-
-async function createProjectAction(formData: FormData) {
-  "use server";
-
-  const supabase = await createServerSupabase();
-  const { data } = await supabase.auth.getUser();
-  const { data: sessionData } = await supabase.auth.getSession();
-  const user = data.user;
-  if (!user) {
-    redirect("/login");
-  }
-  const isPlatformAdmin = isPlatformAdminFromAccessToken(sessionData.session?.access_token);
-
-  const formOrgId = String(formData.get("org_id") ?? "").trim();
-  const unitId = String(formData.get("unit_id") ?? "").trim();
-  const name = String(formData.get("name") ?? "").trim();
-  const startDate = String(formData.get("start_date") ?? "").trim();
-  const status = String(formData.get("status") ?? "").trim();
-  if (!formOrgId || !unitId || !name) return;
-  const adminClient = createAdminSupabase();
-  const userOrgId = isPlatformAdmin ? null : await getLatestUserOrgId(adminClient, user.id);
-  if (!isPlatformAdmin && (!userOrgId || formOrgId !== userOrgId)) {
-    redirect(`/admin/projects?error=${encodeURIComponent("permission_denied")}`);
-  }
-  const allowed = isPlatformAdmin || await checkPermission(adminClient, user.id, formOrgId, "projects", "create");
-  if (!allowed) {
-    redirect(`/admin/projects?error=${encodeURIComponent("permission_denied")}`);
-  }
-  await adminClient.from("projects").insert({
-    org_id: formOrgId,
-    unit_id: unitId,
-    name,
-    start_date: startDate || undefined,
-    status: status || undefined,
-  });
-  redirect(`/admin/projects?ok=created`);
-}
 
 async function deleteProjectAction(formData: FormData) {
   "use server";
@@ -219,28 +183,7 @@ export default async function AdminProjectsPage({ searchParams }: PageProps) {
       {!error && (!projects || projects.length === 0) && <p>目前沒有專案。</p>}
 
       {!error && canCreate && (
-        <form className="admin-form" action={createProjectAction}>
-          <select name="org_id" defaultValue={orgId ?? ""}>
-            <option value="">選擇公司</option>
-            {(orgs ?? []).map((org) => (
-              <option key={org.id} value={org.id}>
-                {org.name}
-              </option>
-            ))}
-          </select>
-          <select name="unit_id" defaultValue="">
-            <option value="">選擇部門</option>
-            {(units ?? []).map((unit) => (
-              <option key={unit.id} value={unit.id}>
-                {unit.name}
-              </option>
-            ))}
-          </select>
-          <input name="name" placeholder="專案名稱" />
-          <input name="start_date" type="date" lang="zh-TW" title="YYYY/MM/DD" placeholder="開始日期 (YYYY/MM/DD)" />
-          <input name="status" placeholder="狀態（選填）" />
-          <button type="submit">新增專案</button>
-        </form>
+        <ProjectForm orgs={orgs ?? []} units={units ?? []} defaultOrgId={orgId} />
       )}
 
       {!error && projects && projects.length > 0 && (
@@ -368,3 +311,4 @@ export default async function AdminProjectsPage({ searchParams }: PageProps) {
     </div>
   );
 }
+

@@ -10,7 +10,10 @@ type MembershipProfileRow = {
   user_id: string;
   unit_id: string;
   role: string | null;
-  profiles: { display_name: string | null } | { display_name: string | null }[] | null;
+  profiles:
+    | { display_name: string | null; job_title_id: string | null }
+    | { display_name: string | null; job_title_id: string | null }[]
+    | null;
 };
 
 
@@ -117,8 +120,15 @@ export default async function ProjectDetailPage({
   const { data: tasks, error: tErr } = await tasksQuery;
 
   let units: Array<{ id: string; name: string }> = [];
-  let members: Array<{ user_id: string; unit_id: string; role: string | null; display_name: string | null }> =
-    [];
+  let members: Array<{
+    user_id: string;
+    unit_id: string;
+    role: string | null;
+    display_name: string | null;
+    job_title_id: string | null;
+    job_title: string | null;
+  }> = [];
+  let jobTitleById: Record<string, string> = {};
 
   if (project?.org_id) {
     const { data: unitRows } = await dataClient
@@ -128,18 +138,29 @@ export default async function ProjectDetailPage({
       .order("name", { ascending: true });
     units = unitRows ?? [];
 
+    const { data: jobTitleRows } = await dataClient
+      .from("job_titles")
+      .select("id, name")
+      .eq("org_id", project.org_id)
+      .order("name", { ascending: true });
+    jobTitleById = Object.fromEntries((jobTitleRows ?? []).map((row) => [row.id, row.name]));
+
     const { data: memberRows } = await dataClient
       .from("memberships")
-      .select("user_id, unit_id, role, profiles(display_name)")
+      .select("user_id, unit_id, role, profiles(display_name, job_title_id)")
       .eq("org_id", project.org_id);
     const memberSource = (memberRows ?? []) as MembershipProfileRow[];
     members = memberSource.map((row) => {
       const profile = Array.isArray(row.profiles) ? row.profiles[0] : row.profiles;
+      const jobTitleId = profile?.job_title_id ?? null;
+      const jobTitleName = jobTitleId ? jobTitleById[jobTitleId] ?? null : null;
       return {
         user_id: row.user_id,
         unit_id: row.unit_id,
         role: row.role ?? null,
         display_name: profile?.display_name ?? null,
+        job_title_id: jobTitleId,
+        job_title: jobTitleName,
       };
     });
   }
@@ -185,6 +206,21 @@ export default async function ProjectDetailPage({
     dErr = { message: "permission_denied" };
   }
 
+  let assigneesByTaskId: Record<string, string[]> = {};
+  if (taskIds.length && hasUnitAccess) {
+    const { data: assigneeRows } = await dataClient
+      .from("project_task_assignees")
+      .select("task_id, user_id")
+      .in("task_id", taskIds);
+    assigneesByTaskId = (assigneeRows ?? []).reduce((acc, row) => {
+      if (!acc[row.task_id]) {
+        acc[row.task_id] = [];
+      }
+      acc[row.task_id].push(row.user_id);
+      return acc;
+    }, {} as Record<string, string[]>);
+  }
+
   return (
     <div className="page">
       {pErr && <div className="admin-error">{pErr.message}</div>}
@@ -198,6 +234,7 @@ export default async function ProjectDetailPage({
           driveItems={driveItems ?? []}
           units={units}
           members={members}
+          assigneesByTaskId={assigneesByTaskId}
           initialTab={initialTab}
         />
       )}

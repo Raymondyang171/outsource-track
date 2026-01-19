@@ -77,7 +77,7 @@ async function approveDeviceAction(formData: FormData) {
 
   // 1) load row org_id from DB (source of truth)
   const { data: row, error: loadErr } = await admin
-    .from("device_allowlist")
+    .from("devices")
     .select("id, org_id")
     .eq("id", deviceId)
     .single();
@@ -98,7 +98,7 @@ async function approveDeviceAction(formData: FormData) {
 
   // 3) update with scoped condition
   const updateQuery = admin
-    .from("device_allowlist")
+    .from("devices")
     .update({
       approved: true,
       approved_at: new Date().toISOString(),
@@ -140,7 +140,7 @@ async function revokeDeviceAction(formData: FormData) {
 
   // 1) load row org_id from DB (source of truth)
   const { data: row, error: loadErr } = await admin
-    .from("device_allowlist")
+    .from("devices")
     .select("id, org_id")
     .eq("id", deviceId)
     .single();
@@ -172,7 +172,7 @@ async function revokeDeviceAction(formData: FormData) {
 
   // 3) update with scoped condition
   const updateQuery = admin
-    .from("device_allowlist")
+    .from("devices")
     .update({
       approved: false,
       approved_at: null,
@@ -222,7 +222,7 @@ export default async function AdminDevicesPage({ searchParams }: PageProps) {
   }
 
   let query = admin
-    .from("device_allowlist")
+    .from("devices")
     .select("id, created_at, user_id, user_email, org_id, unit_id, device_id, device_name, last_seen_at, approved, approved_at")
     .order("created_at", { ascending: false });
 

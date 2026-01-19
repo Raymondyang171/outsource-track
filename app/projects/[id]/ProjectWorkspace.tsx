@@ -5,6 +5,11 @@ import type { PointerEvent as ReactPointerEvent } from "react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { createProjectTask, getTaskLogs, updateTaskAssignees, updateTaskProgress, updateTaskSchedule } from "./actions";
+import { useUploadOutbox } from "@/lib/client/outbox/uploads";
+import { getDeviceId } from "@/lib/device";
+import { safeFetch } from "@/lib/api-client";
+
+const DEXIE_RETRY_COUNT = 5;
 
 type Project = {
   id: string;
@@ -70,7 +75,10 @@ type Props = {
     unit_id: string;
     role: string | null;
     display_name: string | null;
+    job_title_id: string | null;
+    job_title: string | null;
   }>;
+  assigneesByTaskId: Record<string, string[]>;
   initialTab?: string;
 };
 
@@ -105,6 +113,7 @@ export default function ProjectWorkspace({
   driveItems,
   units,
   members,
+  assigneesByTaskId,
   initialTab,
 }: Props) {
   const isViewer = role === "viewer";
@@ -133,8 +142,12 @@ export default function ProjectWorkspace({
   const [subtaskDuration, setSubtaskDuration] = useState(2);
   const [subtaskMsg, setSubtaskMsg] = useState("");
   const [assigneeUnitId, setAssigneeUnitId] = useState("");
-  const [assigneeUserId, setAssigneeUserId] = useState("");
+  const [assigneeUserIds, setAssigneeUserIds] = useState<string[]>([]);
+  const [assigneeSearch, setAssigneeSearch] = useState("");
   const [assigneeMsg, setAssigneeMsg] = useState("");
+  const [assigneesByTaskIdState, setAssigneesByTaskIdState] = useState<Record<string, string[]>>(
+    assigneesByTaskId
+  );
   const [flagsByTask, setFlagsByTask] = useState<Record<string, TaskFlag[]>>({});
   const [flagManager, setFlagManager] = useState<{ open: boolean; taskId: string | null }>({
     open: false,
@@ -154,6 +167,10 @@ export default function ProjectWorkspace({
   const [isPending, startTransition] = useTransition();
   const [isCreating, startCreate] = useTransition();
 
+  useEffect(() => {
+    setAssigneesByTaskIdState(assigneesByTaskId);
+  }, [assigneesByTaskId]);
+
   const sendLog = (payload: Record<string, any>) => {
     try {
       const body = JSON.stringify(payload);
@@ -162,11 +179,10 @@ export default function ProjectWorkspace({
         navigator.sendBeacon("/api/logs", blob);
         return;
       }
-      void fetch("/api/logs", {
+      void safeFetch("/api/logs", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body,
-        keepalive: true,
       });
     } catch {
       // ignore logging failures
@@ -174,6 +190,7 @@ export default function ProjectWorkspace({
   };
 
   const unitNameById = useMemo(() => {
+    if (!units) return {};
     return Object.fromEntries(units.map((unit) => [unit.id, unit.name]));
   }, [units]);
 
@@ -181,16 +198,25 @@ export default function ProjectWorkspace({
     return members
       .map((member) => {
         const unitName = unitNameById[member.unit_id] ?? "未指派部門";
+        const jobTitle = member.job_title?.trim() ? member.job_title : "未設定職稱";
+        const roleLabel = member.role?.trim() ? member.role : "未設定權限";
         const label = member.display_name
-          ? `${member.display_name}（${unitName}）`
-          : `${member.user_id.slice(0, 8)}（${unitName}）`;
+          ? `${unitName}-${member.display_name}-${jobTitle}-${roleLabel}`
+          : `${unitName}-${member.user_id.slice(0, 8)}-${jobTitle}-${roleLabel}`;
         return {
           ...member,
           label,
+          searchKey: `${unitName} ${member.display_name ?? ""} ${jobTitle} ${roleLabel}`.toLowerCase(),
         };
       })
       .sort((a, b) => a.label.localeCompare(b.label, "zh-Hant"));
   }, [members, unitNameById]);
+
+  const filteredMemberOptions = useMemo(() => {
+    const query = assigneeSearch.trim().toLowerCase();
+    if (!query) return memberOptions;
+    return memberOptions.filter((member) => member.searchKey.includes(query));
+  }, [assigneeSearch, memberOptions]);
 
   const handleExportReport = () => {
     sendLog({
@@ -558,7 +584,15 @@ export default function ProjectWorkspace({
     setSelectedId(task.id);
     setPanelOpen(true);
     setAssigneeUnitId(task.owner_unit_id ?? "");
-    setAssigneeUserId(task.owner_user_id ?? "");
+    const initialAssignees = assigneesByTaskIdState[task.id] ?? [];
+    setAssigneeUserIds(
+      initialAssignees.length > 0 && initialAssignees.every(Boolean)
+        ? initialAssignees
+        : task.owner_user_id
+          ? [task.owner_user_id]
+          : []
+    );
+    setAssigneeSearch("");
     setAssigneeMsg("");
   }
 
@@ -575,10 +609,12 @@ export default function ProjectWorkspace({
   async function saveAssignees() {
     if (!selectedTask) return;
     setAssigneeMsg("");
+    const primaryAssigneeId = assigneeUserIds[0] ?? null;
     const res = await updateTaskAssignees({
       task_id: selectedTask.id,
       owner_unit_id: assigneeUnitId || null,
-      owner_user_id: assigneeUserId || null,
+      owner_user_id: primaryAssigneeId,
+      assignee_user_ids: assigneeUserIds,
     });
 
     if (!res?.ok) {
@@ -592,11 +628,15 @@ export default function ProjectWorkspace({
           ? {
               ...task,
               owner_unit_id: assigneeUnitId || null,
-              owner_user_id: assigneeUserId || null,
+              owner_user_id: primaryAssigneeId,
             }
           : task
       )
     );
+    setAssigneesByTaskIdState((prev) => ({
+      ...prev,
+      [selectedTask.id]: [...assigneeUserIds],
+    }));
     setAssigneeMsg("已更新指派");
   }
 
@@ -605,7 +645,7 @@ export default function ProjectWorkspace({
     const confirmed = window.confirm("確定要刪除此檔案嗎？");
     if (!confirmed) return;
     try {
-      const res = await fetch("/api/drive/delete", {
+      const res = await safeFetch("/api/drive/delete", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ item_id: fileId }),
@@ -1366,23 +1406,56 @@ export default function ProjectWorkspace({
                         </option>
                       ))}
                     </select>
-                    <label className="page-subtitle" htmlFor="task-owner-user">
-                      負責個人
+                    <label className="page-subtitle" htmlFor="task-owner-user-search">
+                      負責個人（可複選）
                     </label>
-                    <select
-                      id="task-owner-user"
-                      className="select"
-                      value={assigneeUserId}
-                      onChange={(e) => setAssigneeUserId(e.target.value)}
+                    <input
+                      id="task-owner-user-search"
+                      className="input"
+                      placeholder="搜尋部門 / 名字 / 職稱 / 權限"
+                      value={assigneeSearch}
+                      onChange={(e) => setAssigneeSearch(e.target.value)}
                       disabled={isViewer}
+                    />
+                    <div className="page-subtitle">已選擇 {assigneeUserIds.length} 位</div>
+                    <div
+                      className="card"
+                      style={{ padding: 10, marginTop: 8, maxHeight: 220, overflowY: "auto" }}
                     >
-                      <option value="">未指定</option>
-                      {memberOptions.map((member) => (
-                        <option key={`${member.user_id}-${member.unit_id}`} value={member.user_id}>
-                          {member.label}
-                        </option>
-                      ))}
-                    </select>
+                      {filteredMemberOptions.length === 0 && (
+                        <div className="page-subtitle">找不到符合條件的成員</div>
+                      )}
+                      {filteredMemberOptions.map((member) => {
+                        const checked = assigneeUserIds.includes(member.user_id);
+                        return (
+                          <label
+                            key={`${member.user_id}-${member.unit_id}`}
+                            className="page-subtitle"
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              gap: 8,
+                              padding: "4px 0",
+                            }}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={() => {
+                                setAssigneeUserIds((prev) => {
+                                  if (prev.includes(member.user_id)) {
+                                    return prev.filter((id) => id !== member.user_id);
+                                  }
+                                  return [...prev, member.user_id];
+                                });
+                              }}
+                              disabled={isViewer}
+                            />
+                            <span>{member.label}</span>
+                          </label>
+                        );
+                      })}
+                    </div>
                     <div className="topbar-right">
                       <button
                         className="btn btn-primary"
@@ -1606,6 +1679,7 @@ function FileUploadForm({
 }) {
   const driveFolderUrl = process.env.NEXT_PUBLIC_GOOGLE_DRIVE_FOLDER_URL;
   const driveFolderName = process.env.NEXT_PUBLIC_GOOGLE_DRIVE_FOLDER_NAME ?? "Google 雲端硬碟";
+  const { addToOutbox } = useUploadOutbox();
   const [displayName, setDisplayName] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const [message, setMessage] = useState("");
@@ -1620,57 +1694,19 @@ function FileUploadForm({
 
     setIsUploading(true);
     try {
-      const formData = new FormData();
-      formData.append("task_id", taskId);
-      formData.append("display_name", displayName);
-      formData.append("file", file);
-      const res = await fetch("/api/drive/upload", {
-        method: "POST",
-        body: formData,
+      const device_id = getDeviceId();
+      const idempotency_key = window.crypto.randomUUID();
+      await addToOutbox({
+        taskId,
+        displayName,
+        file,
+        device_id,
+        idempotency_key,
       });
-
-      const rawText = await res.text();
-      let payload: any = null;
-      try {
-        payload = rawText ? JSON.parse(rawText) : null;
-      } catch {
-        payload = null;
-      }
-      if (!res.ok) {
-        const errorKey = payload?.error ?? "upload_failed";
-        const friendlyMessages: Record<string, string> = {
-          missing_google_oauth:
-            "尚未設定 Google 雲端硬碟 OAuth，請先設定 GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET / GOOGLE_REFRESH_TOKEN。",
-          not_authenticated: "尚未登入，請先登入後再上傳。",
-          permission_denied: "沒有上傳權限，請聯絡管理員。",
-          task_not_found: "找不到任務，請重新整理頁面。",
-          missing_service_role_key: "缺少服務金鑰，請設定 SUPABASE_SERVICE_ROLE_KEY。",
-          file_too_large: "檔案超過 10MB 限制，請縮小後再試。",
-          image_too_large: "圖片壓縮後仍超過 10MB，請縮小後再試。",
-          unauthorized_client:
-            "Google OAuth 未被授權（unauthorized_client）。請確認 OAuth 憑證類型與已授權的重新導向 URI。",
-        };
-        if (!payload && rawText) {
-          setMessage(`upload_failed: ${rawText}`);
-        } else {
-          setMessage(friendlyMessages[errorKey] ?? errorKey);
-        }
-        return;
-      }
-
-      if (payload?.item) {
-        onUploaded({
-          id: payload.item.id,
-          name: payload.item.name,
-          url: payload.item.web_view_link,
-          thumbnailLink: payload.item.thumbnail_link,
-          mimeType: payload.item.mime_type,
-        });
-      }
 
       setDisplayName("");
       setFile(null);
-      setMessage("上傳成功");
+      setMessage("已加入上傳佇列");
     } catch (err: any) {
       setMessage(err?.message ?? "upload_failed");
     } finally {

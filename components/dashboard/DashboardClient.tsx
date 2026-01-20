@@ -1,7 +1,11 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 
 const ragTone = {
   green: { background: "#d1fae5", color: "#047857" },
@@ -174,46 +178,56 @@ export default function DashboardClient({
   const selectedProjectAssists = selectedProject ? assistsByProject[selectedProject.id] ?? [] : [];
 
   return (
-    <div className="page">
-      <div className="page-header">
+    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 space-y-6">
+      <div className="flex items-center justify-between">
         <div>
-          <div className="page-title">儀表板</div>
-          <div className="page-subtitle">部門 → 專案 → 任務，快速掌握 KPI、進度與協助狀態。</div>
+          <h1 className="text-2xl font-bold">儀表板</h1>
+          <p className="text-muted-foreground">部門 → 專案 → 任務，快速掌握 KPI、進度與協助狀態。</p>
         </div>
       </div>
 
-      <div className="card" style={{ padding: 18 }}>
+      <div className="card">
         <form className="flex flex-col md:flex-row gap-3" method="get">
-          <select name="unit_id" defaultValue={unitIdFilter} className="select">
-            <option value="">全部部門</option>
-            {units.map((unit) => (
-              <option key={unit.id} value={unit.id}>
-                {unit.name}
-              </option>
-            ))}
-          </select>
-          <select name="project_id" defaultValue={projectIdFilter} className="select">
-            <option value="">選擇專案</option>
-            {projects.map((project) => (
-              <option key={project.id} value={project.id}>
-                {project.name}
-              </option>
-            ))}
-          </select>
-          <button type="submit" className="btn btn-primary">
+          <Select name="unit_id" defaultValue={unitIdFilter || "all"}>
+            <SelectTrigger className="w-full md:w-[180px]">
+              <SelectValue placeholder="全部部門" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">全部部門</SelectItem>
+              {units.map((unit) => (
+                <SelectItem key={unit.id} value={unit.id}>
+                  {unit.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Select name="project_id" defaultValue={projectIdFilter || "all"}>
+            <SelectTrigger className="w-full md:w-[180px]">
+              <SelectValue placeholder="選擇專案" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">選擇專案</SelectItem>
+              {projects.map((project) => (
+                <SelectItem key={project.id} value={project.id}>
+                  {project.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Button type="submit">
             套用篩選
-          </button>
+          </Button>
         </form>
       </div>
 
       <div className="card">
         <div className="card-header">
           <div className="card-title">部門總覽</div>
-          <div className="topbar-right">
+          <div className="flex items-center gap-2">
             <span className="badge">加權進度 + 紅黃綠</span>
-            <button type="button" className="btn btn-ghost" onClick={() => setPortfolioOpen((prev) => !prev)}>
+            <Button variant="ghost" onClick={() => setPortfolioOpen((prev) => !prev)}>
               {portfolioOpen ? "收合" : "展開"}
-            </button>
+            </Button>
           </div>
         </div>
         {portfolioOpen && (
@@ -293,22 +307,27 @@ export default function DashboardClient({
         </div>
         {!selectedProject && <div className="page-subtitle">請先選擇專案。</div>}
         {selectedProject && (
-          <>
-            <form className="admin-form-grid" action={createAssistAction}>
+          <div className="space-y-4">
+            <form className="grid grid-cols-1 md:grid-cols-4 gap-3 items-end" action={createAssistAction}>
               <input type="hidden" name="project_id" value={selectedProject.id} />
-              <select name="to_unit_id" defaultValue="" className="select">
-                <option value="">指派部門（可選）</option>
-                {units.map((unit) => (
-                  <option key={unit.id} value={unit.id}>
-                    {unit.name}
-                  </option>
-                ))}
-              </select>
-              <input name="due_date" type="date" placeholder="到期日" />
-              <input name="note" placeholder="協助說明" />
-                <button type="submit" className="btn btn-primary">
-                  新增協助
-                </button>
+              <Select name="to_unit_id" defaultValue="all">
+                <SelectTrigger>
+                  <SelectValue placeholder="指派部門（可選）" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">指派部門（可選）</SelectItem>
+                  {units.map((unit) => (
+                    <SelectItem key={unit.id} value={unit.id}>
+                      {unit.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Input name="due_date" type="date" placeholder="到期日" />
+              <Input name="note" placeholder="協助說明" />
+              <Button type="submit">
+                新增協助
+              </Button>
             </form>
             {selectedProjectAssists.length === 0 && (
               <div className="page-subtitle">目前沒有協助請求。</div>
@@ -326,18 +345,23 @@ export default function DashboardClient({
                 <div className="page-subtitle">{assist.note ?? "(無說明)"}</div>
                 <form className="flex gap-2 items-center" action={updateAssistStatusAction}>
                   <input type="hidden" name="assist_id" value={assist.id} />
-                  <select name="status" defaultValue={assist.status} className="select">
-                    <option value="open">待處理</option>
-                    <option value="in_progress">進行中</option>
-                    <option value="resolved">已結案</option>
-                  </select>
-                  <button type="submit" className="btn btn-ghost">
+                  <Select name="status" defaultValue={assist.status}>
+                    <SelectTrigger className="w-[120px]">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                        <SelectItem value="open">待處理</SelectItem>
+                        <SelectItem value="in_progress">進行中</SelectItem>
+                        <SelectItem value="resolved">已結案</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <Button type="submit" variant="ghost">
                     更新
-                  </button>
+                  </Button>
                 </form>
               </div>
             ))}
-          </>
+          </div>
         )}
       </div>
 
@@ -351,160 +375,174 @@ export default function DashboardClient({
           <div className="page-subtitle">此專案尚無任務。</div>
         )}
         {selectedProject && selectedProjectTasks.length > 0 && (
-          <table className="w-full text-left border-collapse">
-            <thead>
-              <tr className="bg-slate-50 border-b border-slate-200 text-xs uppercase text-slate-500 font-semibold tracking-wider">
-                <th className="px-4 py-3">任務</th>
-                <th className="px-4 py-3">進度</th>
-                <th className="px-4 py-3">到期</th>
-                <th className="px-4 py-3">最後回報</th>
-                <th className="px-4 py-3">協助</th>
-                <th className="px-4 py-3">紅黃綠</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {selectedProjectTasks.map((task) => (
-                <tr
-                  key={task.id}
-                  className="hover:bg-slate-50 cursor-pointer"
-                  onClick={() => setSelectedTaskId(task.id)}
-                >
-                  <td className="px-4 py-3">
-                    <div className="font-medium text-slate-900">
-                      {task.code ? `[${task.code}] ` : ""}
-                      {task.name}
-                    </div>
-                    <div className="text-xs text-slate-500">{task.phase_name}</div>
-                  </td>
-                  <td className="px-4 py-3">
-                    <div className="text-sm text-slate-700">{task.progress}%</div>
-                  </td>
-                  <td className="px-4 py-3">
-                    <div className={task.overdue ? "text-rose-600" : "text-slate-600"}>
-                      {formatDate(task.due_date)}
-                    </div>
-                  </td>
-                  <td className="px-4 py-3 text-slate-600">{formatDateTime(task.last_report_at)}</td>
-                  <td className="px-4 py-3 text-slate-600">
-                    {task.assist_open} / {task.assist_overdue}
-                  </td>
-                  <td className="px-4 py-3">
-                    <span className="badge" style={ragTone[task.rag]}>
-                      {ragLabel[task.rag]}
-                    </span>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <div className="overflow-x-auto">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>任務</TableHead>
+                  <TableHead>進度</TableHead>
+                  <TableHead>到期</TableHead>
+                  <TableHead>最後回報</TableHead>
+                  <TableHead>協助</TableHead>
+                  <TableHead>紅黃綠</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {selectedProjectTasks.map((task) => (
+                  <TableRow
+                    key={task.id}
+                    className="cursor-pointer"
+                    onClick={() => setSelectedTaskId(task.id)}
+                  >
+                    <TableCell>
+                      <div className="font-medium">
+                        {task.code ? `[${task.code}] ` : ""}
+                        {task.name}
+                      </div>
+                      <div className="text-xs text-muted-foreground">{task.phase_name}</div>
+                    </TableCell>
+                    <TableCell>{task.progress}%</TableCell>
+                    <TableCell>
+                      <div className={task.overdue ? "text-destructive" : ""}>
+                        {formatDate(task.due_date)}
+                      </div>
+                    </TableCell>
+                    <TableCell>{formatDateTime(task.last_report_at)}</TableCell>
+                    <TableCell>
+                      {task.assist_open} / {task.assist_overdue}
+                    </TableCell>
+                    <TableCell>
+                      <span className="badge" style={ragTone[task.rag]}>
+                        {ragLabel[task.rag]}
+                      </span>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
         )}
       </div>
 
       <Sheet open={!!selectedTaskId} onOpenChange={(open) => !open && setSelectedTaskId(null)}>
-        <SheetContent side="right" className="task-panel">
+        <SheetContent side="right" className="w-[420px] sm:w-[540px] overflow-y-auto">
           <SheetHeader>
             <SheetTitle>任務抽屜</SheetTitle>
           </SheetHeader>
-          {!selectedTask && <div className="page-subtitle">尚未選擇任務</div>}
+          {!selectedTask && <div className="text-muted-foreground p-6">尚未選擇任務</div>}
           {selectedTask && (
-            <div className="panel-stack">
-              <div className="card" style={{ padding: 14 }}>
-                <div className="card-title">
+            <div className="space-y-6 p-6">
+              <div className="space-y-1.5">
+                <h2 className="text-lg font-semibold">
                   {selectedTask.code ? `[${selectedTask.code}] ` : ""}
                   {selectedTask.name}
-                </div>
-                <div className="page-subtitle">階段 {selectedTask.phase_name}</div>
-                <div className="page-subtitle">
+                </h2>
+                <p className="text-muted-foreground">階段 {selectedTask.phase_name}</p>
+                <p className="text-muted-foreground">
                   到期 {formatDate(selectedTask.due_date)} ・最後回報 {formatDateTime(selectedTask.last_report_at)}
-                </div>
+                </p>
               </div>
 
-              <div className="card" style={{ padding: 14 }}>
-                <div className="card-header">
-                  <div className="card-title">任務協助</div>
+              <div className="space-y-4 rounded-lg border p-4">
+                <div className="flex items-center justify-between">
+                  <h3 className="font-semibold">任務協助</h3>
                   <span className="badge">{selectedTask.assist_open} 未結案</span>
                 </div>
-                <form className="admin-form-grid" action={createAssistAction}>
+                <form className="grid grid-cols-1 md:grid-cols-2 gap-3 items-end" action={createAssistAction}>
                   <input type="hidden" name="project_id" value={selectedTask.project_id} />
                   <input type="hidden" name="project_task_id" value={selectedTask.id} />
-                  <select name="to_unit_id" defaultValue="" className="select">
-                    <option value="">指派部門（可選）</option>
-                    {units.map((unit) => (
-                      <option key={unit.id} value={unit.id}>
-                        {unit.name}
-                      </option>
-                    ))}
-                  </select>
-                  <input name="due_date" type="date" placeholder="到期日" />
-                  <input name="note" placeholder="協助說明" />
-                  <button type="submit" className="btn btn-primary">
+                  <div className="md:col-span-2">
+                    <Select name="to_unit_id" defaultValue="all">
+                      <SelectTrigger>
+                        <SelectValue placeholder="指派部門（可選）" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">指派部門（可選）</SelectItem>
+                        {units.map((unit) => (
+                          <SelectItem key={unit.id} value={unit.id}>
+                            {unit.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <Input name="due_date" type="date" placeholder="到期日" />
+                  <Input name="note" placeholder="協助說明" />
+                  <Button type="submit" className="md:col-span-2">
                     新增協助
-                  </button>
+                  </Button>
                 </form>
                 {(assistsByTask[selectedTask.id] ?? []).length === 0 && (
-                  <div className="page-subtitle">尚無協助請求。</div>
+                  <div className="text-muted-foreground text-sm">尚無協助請求。</div>
                 )}
-                {(assistsByTask[selectedTask.id] ?? []).map((assist) => (
-                  <div className="task-card" key={assist.id}>
-                    <div className="card-header">
-                      <div className="card-title">
-                        {unitNameById[assist.unit_id] ?? "未指派"} →
-                        {assist.to_unit_id ? unitNameById[assist.to_unit_id] ?? "未指派" : "未指派"}
+                <div className="space-y-4">
+                  {(assistsByTask[selectedTask.id] ?? []).map((assist) => (
+                    <div className="rounded-lg border p-3 space-y-2" key={assist.id}>
+                      <div className="flex items-center justify-between">
+                        <div className="font-medium text-sm">
+                          {unitNameById[assist.unit_id] ?? "未指派"} →
+                          {assist.to_unit_id ? unitNameById[assist.to_unit_id] ?? "未指派" : "未指派"}
+                        </div>
+                        <span className="badge">狀態 {assistStatusLabel[assist.status] ?? assist.status}</span>
                       </div>
-                      <span className="badge">狀態 {assistStatusLabel[assist.status] ?? assist.status}</span>
+                      <p className="text-muted-foreground text-sm">到期 {assist.due_date ?? "-"}</p>
+                      <p className="text-sm">{assist.note ?? "(無說明)"}</p>
+                      <form className="flex gap-2 items-center" action={updateAssistStatusAction}>
+                        <input type="hidden" name="assist_id" value={assist.id} />
+                        <Select name="status" defaultValue={assist.status}>
+                          <SelectTrigger className="w-[120px]">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                              <SelectItem value="open">待處理</SelectItem>
+                              <SelectItem value="in_progress">進行中</SelectItem>
+                              <SelectItem value="resolved">已結案</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <Button type="submit" variant="ghost">
+                          更新
+                        </Button>
+                      </form>
                     </div>
-                    <div className="page-subtitle">到期 {assist.due_date ?? "-"}</div>
-                    <div className="page-subtitle">{assist.note ?? "(無說明)"}</div>
-                    <form className="flex gap-2 items-center" action={updateAssistStatusAction}>
-                      <input type="hidden" name="assist_id" value={assist.id} />
-                      <select name="status" defaultValue={assist.status} className="select">
-                        <option value="open">待處理</option>
-                        <option value="in_progress">進行中</option>
-                        <option value="resolved">已結案</option>
-                      </select>
-                      <button type="submit" className="btn btn-ghost">
-                        更新
-                      </button>
-                    </form>
-                  </div>
-                ))}
+                  ))}
+                </div>
               </div>
 
-              <div className="card" style={{ padding: 14 }}>
-                <div className="card-header">
-                  <div className="card-title">進度回報</div>
-                </div>
+              <div className="space-y-3 rounded-lg border p-4">
+                <h3 className="font-semibold">進度回報</h3>
                 {(logsByTask[selectedTask.id] ?? []).length === 0 && (
-                  <div className="page-subtitle">尚無回報紀錄</div>
+                  <div className="text-muted-foreground text-sm">尚無回報紀錄</div>
                 )}
-                {(logsByTask[selectedTask.id] ?? []).map((log) => (
-                  <div className="task-card" key={log.id}>
-                    <div>{log.note ?? "進度更新"}</div>
-                    <div className="page-subtitle">
-                      {formatDateTime(log.created_at)} ・{log.progress}%
+                <div className="space-y-3">
+                  {(logsByTask[selectedTask.id] ?? []).map((log) => (
+                    <div className="p-2" key={log.id}>
+                      <p className="text-sm">{log.note ?? "進度更新"}</p>
+                      <p className="text-muted-foreground text-xs">
+                        {formatDateTime(log.created_at)} ・{log.progress}%
+                      </p>
                     </div>
-                  </div>
-                ))}
+                  ))}
+                </div>
               </div>
 
-              <div className="card" style={{ padding: 14 }}>
-                <div className="card-header">
-                  <div className="card-title">文件連結</div>
-                </div>
+              <div className="space-y-3 rounded-lg border p-4">
+                <h3 className="font-semibold">文件連結</h3>
                 {(driveItemsByTask[selectedTask.id] ?? []).length === 0 && (
-                  <div className="page-subtitle">尚無文件</div>
+                  <div className="text-muted-foreground text-sm">尚無文件</div>
                 )}
-                {(driveItemsByTask[selectedTask.id] ?? []).map((item) => (
-                  <div className="file-item" key={item.id}>
-                    <div className="file-thumb file-thumb-fallback">FILE</div>
-                    <div className="file-meta">
-                      <div className="file-title">{item.name}</div>
-                      <a className="page-subtitle" href={item.web_view_link} target="_blank" rel="noreferrer">
-                        {item.web_view_link}
-                      </a>
+                <div className="space-y-3">
+                  {(driveItemsByTask[selectedTask.id] ?? []).map((item) => (
+                    <div className="flex items-center gap-3 rounded-md border p-2" key={item.id}>
+                      <div className="w-12 h-12 bg-muted rounded-md flex items-center justify-center text-muted-foreground text-xs">FILE</div>
+                      <div className="flex-1 space-y-1">
+                        <p className="text-sm font-medium leading-none">{item.name}</p>
+                        <a className="text-xs text-muted-foreground hover:underline" href={item.web_view_link} target="_blank" rel="noreferrer">
+                          {item.web_view_link}
+                        </a>
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  ))}
+                </div>
               </div>
             </div>
           )}

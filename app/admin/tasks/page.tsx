@@ -1,6 +1,12 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { ListTodo } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "@/components/ui/dialog";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
+import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { createServerSupabase } from "@/lib/supabase/server";
 import { createAdminSupabase } from "@/lib/supabase/admin";
 import { checkPermission, getPermissionsForResource } from "@/lib/permissions";
@@ -10,6 +16,12 @@ import { isPlatformAdminFromAccessToken } from "@/lib/auth";
 import { getLatestUserOrgId } from "@/lib/org";
 
 export const dynamic = "force-dynamic";
+
+const EMPTY_SELECT_VALUE = "__empty__";
+
+function normalizeSelectValue(value: string) {
+  return value === EMPTY_SELECT_VALUE ? "" : value;
+}
 
 function emailToDisplayName(email: string | null | undefined) {
   if (!email) return "user";
@@ -56,8 +68,8 @@ async function updateTaskAction(formData: FormData) {
   const name = String(formData.get("name") ?? "").trim();
   const seqRaw = String(formData.get("seq") ?? "").trim();
   const progressRaw = String(formData.get("progress") ?? "").trim();
-  const unitId = String(formData.get("unit_id") ?? "").trim();
-  const ownerUnitId = String(formData.get("owner_unit_id") ?? "").trim();
+  const unitId = normalizeSelectValue(String(formData.get("unit_id") ?? "").trim());
+  const ownerUnitId = normalizeSelectValue(String(formData.get("owner_unit_id") ?? "").trim());
   const startOffsetRaw = String(formData.get("start_offset_days") ?? "").trim();
   const durationRaw = String(formData.get("duration_days") ?? "").trim();
   const completedAtRaw = String(formData.get("completed_at") ?? "").trim();
@@ -159,15 +171,15 @@ async function createTaskAction(formData: FormData) {
   }
   const isPlatformAdmin = isPlatformAdminFromAccessToken(sessionData.session?.access_token);
 
-  const formOrgId = String(formData.get("org_id") ?? "").trim();
-  const unitId = String(formData.get("unit_id") ?? "").trim();
-  const projectId = String(formData.get("project_id") ?? "").trim();
+  const formOrgId = normalizeSelectValue(String(formData.get("org_id") ?? "").trim());
+  const unitId = normalizeSelectValue(String(formData.get("unit_id") ?? "").trim());
+  const projectId = normalizeSelectValue(String(formData.get("project_id") ?? "").trim());
   const phaseName = String(formData.get("phase_name") ?? "").trim();
   const code = String(formData.get("code") ?? "").trim();
   const name = String(formData.get("name") ?? "").trim();
   const startOffsetRaw = String(formData.get("start_offset_days") ?? "").trim();
   const durationRaw = String(formData.get("duration_days") ?? "").trim();
-  const ownerUnitId = String(formData.get("owner_unit_id") ?? "").trim();
+  const ownerUnitId = normalizeSelectValue(String(formData.get("owner_unit_id") ?? "").trim());
 
   const startOffsetDays = startOffsetRaw ? Number(startOffsetRaw) : 0;
   const durationDays = durationRaw ? Number(durationRaw) : 1;
@@ -477,21 +489,21 @@ export default async function AdminTasksPage({
   return (
     <div className="min-h-screen bg-slate-50/50 p-6 space-y-6">
       {/* 標題與統計區 */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-800 flex items-center gap-2">
+      <div className="flex items-center justify-between">
+        <div className="space-y-1">
+          <h1 className="text-2xl font-bold flex items-center gap-2">
             <ListTodo className="w-6 h-6 text-blue-600" />
             任務管理
           </h1>
-          <p className="text-slate-500 text-sm mt-1">
+          <p className="text-muted-foreground">
             管理所有專案的任務進度與詳細資訊
             {!isPlatformAdmin && !orgId && <span className="text-amber-600 ml-2">(尚未綁定組織)</span>}
           </p>
         </div>
-        <div className="flex gap-3">
-          <div className="bg-white px-4 py-2 rounded-lg border border-slate-200 shadow-sm flex flex-col items-center">
-            <span className="text-xs text-slate-500 uppercase font-bold">總任務數</span>
-            <span className="text-xl font-bold text-slate-800">{tasks?.length ?? 0}</span>
+        <div className="flex items-center gap-3">
+          <div className="bg-card text-card-foreground p-3 rounded-lg border flex flex-col items-center">
+            <span className="text-xs text-muted-foreground uppercase font-bold">總任務數</span>
+            <span className="text-xl font-bold">{tasks?.length ?? 0}</span>
           </div>
         </div>
       </div>
@@ -524,13 +536,15 @@ export default async function AdminTasksPage({
         />
 
         {canCreate && (
-          <details className="group relative">
-            <summary className="list-none cursor-pointer bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2">
-              <span>+ 新增任務</span>
-            </summary>
-            <div className="absolute right-0 top-full mt-2 w-80 md:w-96 bg-white rounded-xl shadow-xl border border-slate-200 p-4 z-10 animate-in fade-in zoom-in-95 duration-200">
-              <h3 className="font-bold text-slate-800 mb-3">快速新增任務</h3>
-              <form className="flex flex-col gap-3" action={createTaskAction}>
+          <Dialog>
+            <DialogTrigger asChild>
+              <Button>+ 新增任務</Button>
+            </DialogTrigger>
+            <DialogContent className="sm:max-w-[425px]">
+              <DialogHeader>
+                <DialogTitle>快速新增任務</DialogTitle>
+              </DialogHeader>
+              <form className="grid gap-4 py-4" action={createTaskAction}>
                 {projectIdFilter && (
                   <>
                     <input type="hidden" name="project_id" value={projectIdFilter} />
@@ -538,71 +552,103 @@ export default async function AdminTasksPage({
                     <input type="hidden" name="unit_id" value={selectedProject?.unit_id ?? ""} />
                   </>
                 )}
-                <select name="org_id" defaultValue={selectedProject?.org_id ?? orgId ?? ""} disabled={!!projectIdFilter} className="w-full p-2 border rounded text-sm">
-                  <option value="">選擇公司</option>
-              {(orgs ?? []).map((org) => (
-                <option key={org.id} value={org.id}>
-                  {org.name}
-                </option>
-              ))}
-            </select>
-                <select name="unit_id" defaultValue={selectedProject?.unit_id ?? ""} disabled={!!projectIdFilter} className="w-full p-2 border rounded text-sm">
-                  <option value="">選擇部門</option>
-              {(units ?? []).map((unit) => (
-                <option key={unit.id} value={unit.id}>
-                  {unit.name}
-                </option>
-              ))}
-            </select>
-                <select name="project_id" defaultValue={projectIdFilter ?? ""} disabled={!!projectIdFilter} className="w-full p-2 border rounded text-sm">
-                  <option value="">選擇專案</option>
-              {(projects ?? []).map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name}
-                </option>
-              ))}
-            </select>
-                <input name="phase_name" placeholder="階段名稱 *" className="w-full p-2 border rounded text-sm" />
-                <input name="name" placeholder="任務名稱 *" className="w-full p-2 border rounded text-sm" />
-                <div className="grid grid-cols-2 gap-2">
-                  <input name="code" placeholder="代碼" className="w-full p-2 border rounded text-sm" />
-                  <input name="start_offset_days" placeholder="開始偏移" className="w-full p-2 border rounded text-sm" />
+                <Select
+                  name="org_id"
+                  defaultValue={selectedProject?.org_id ?? orgId ?? EMPTY_SELECT_VALUE}
+                  disabled={!!projectIdFilter}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="選擇公司" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={EMPTY_SELECT_VALUE}>選擇公司</SelectItem>
+                    {(orgs ?? []).map((org) => (
+                      <SelectItem key={org.id} value={org.id}>
+                        {org.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Select
+                  name="unit_id"
+                  defaultValue={selectedProject?.unit_id ?? EMPTY_SELECT_VALUE}
+                  disabled={!!projectIdFilter}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="選擇部門" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={EMPTY_SELECT_VALUE}>選擇部門</SelectItem>
+                    {(units ?? []).map((unit) => (
+                      <SelectItem key={unit.id} value={unit.id}>
+                        {unit.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Select
+                  name="project_id"
+                  defaultValue={projectIdFilter ?? EMPTY_SELECT_VALUE}
+                  disabled={!!projectIdFilter}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="選擇專案" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={EMPTY_SELECT_VALUE}>選擇專案</SelectItem>
+                    {(projects ?? []).map((p) => (
+                      <SelectItem key={p.id} value={p.id}>
+                        {p.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Input name="phase_name" placeholder="階段名稱 *" />
+                <Input name="name" placeholder="任務名稱 *" />
+                <div className="grid grid-cols-2 gap-4">
+                  <Input name="code" placeholder="代碼" />
+                  <Input name="start_offset_days" placeholder="開始偏移" />
                 </div>
-                <div className="grid grid-cols-2 gap-2">
-                  <input name="duration_days" placeholder="工期" className="w-full p-2 border rounded text-sm" />
-                  <select name="owner_unit_id" defaultValue="" className="w-full p-2 border rounded text-sm">
-                    <option value="">負責部門</option>
-              {(units ?? []).map((unit) => (
-                <option key={unit.id} value={unit.id}>
-                  {unit.name}
-                </option>
-              ))}
-            </select>
+                <div className="grid grid-cols-2 gap-4">
+                  <Input name="duration_days" placeholder="工期" />
+                  <Select name="owner_unit_id" defaultValue={EMPTY_SELECT_VALUE}>
+                    <SelectTrigger>
+                        <SelectValue placeholder="負責部門" />
+                    </SelectTrigger>
+                    <SelectContent>
+                        <SelectItem value={EMPTY_SELECT_VALUE}>負責部門</SelectItem>
+                        {(units ?? []).map((unit) => (
+                        <SelectItem key={unit.id} value={unit.id}>
+                            {unit.name}
+                        </SelectItem>
+                        ))}
+                    </SelectContent>
+                  </Select>
                 </div>
-                <button type="submit" className="w-full bg-blue-600 hover:bg-blue-700 text-white py-2 rounded-lg text-sm font-medium transition-colors">
+                <Button type="submit" className="w-full">
                   確認新增
-                </button>
+                </Button>
               </form>
-            </div>
-          </details>
+            </DialogContent>
+          </Dialog>
         )}
       </div>
 
       {/* 任務列表表格 */}
       {!error && (!tasks || tasks.length === 0) ? (
-        <div className="text-center py-12 bg-white rounded-xl border border-slate-200 border-dashed">
-          <p className="text-slate-400">目前沒有符合條件的任務</p>
+        <div className="text-center py-12 bg-card rounded-xl border border-dashed">
+          <p className="text-muted-foreground">目前沒有符合條件的任務</p>
         </div>
       ) : (
-        <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-x-auto overflow-y-visible">
-          <table className="w-full text-left border-collapse">
-            <thead>
-              <tr className="bg-slate-50 border-b border-slate-200 text-xs uppercase text-slate-500 font-semibold tracking-wider">
-                <th className="px-6 py-4">
+        <div className="rounded-xl border">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>
                   <div className="flex items-center gap-2">
                     <span>任務名稱</span>
                     <a
-                      className="text-xs font-semibold text-slate-500 hover:text-slate-700"
+                      className="text-xs font-semibold"
                       href={buildQueryString({
                         project_id: projectIdFilter,
                         q: searchTerm,
@@ -613,12 +659,12 @@ export default async function AdminTasksPage({
                       {sortBy === "name" ? (sortDir === "asc" ? "▲" : "▼") : "△"}
                     </a>
                   </div>
-                </th>
-                <th className="px-6 py-4">
+                </TableHead>
+                <TableHead>
                   <div className="flex items-center gap-2">
                     <span>專案 / 階段</span>
                     <a
-                      className="text-xs font-semibold text-slate-500 hover:text-slate-700"
+                      className="text-xs font-semibold"
                       href={buildQueryString({
                         project_id: projectIdFilter,
                         q: searchTerm,
@@ -629,12 +675,12 @@ export default async function AdminTasksPage({
                       {sortBy === "phase_name" ? (sortDir === "asc" ? "▲" : "▼") : "△"}
                     </a>
                   </div>
-                </th>
-                <th className="px-6 py-4">
+                </TableHead>
+                <TableHead>
                   <div className="flex items-center gap-2">
                     <span>負責部門</span>
                     <a
-                      className="text-xs font-semibold text-slate-500 hover:text-slate-700"
+                      className="text-xs font-semibold"
                       href={buildQueryString({
                         project_id: projectIdFilter,
                         q: searchTerm,
@@ -645,12 +691,12 @@ export default async function AdminTasksPage({
                       {sortBy === "owner_unit_id" ? (sortDir === "asc" ? "▲" : "▼") : "△"}
                     </a>
                   </div>
-                </th>
-                <th className="px-6 py-4">
+                </TableHead>
+                <TableHead>
                   <div className="flex items-center gap-2">
                     <span>進度</span>
                     <a
-                      className="text-xs font-semibold text-slate-500 hover:text-slate-700"
+                      className="text-xs font-semibold"
                       href={buildQueryString({
                         project_id: projectIdFilter,
                         q: searchTerm,
@@ -661,12 +707,12 @@ export default async function AdminTasksPage({
                       {sortBy === "progress" ? (sortDir === "asc" ? "▲" : "▼") : "△"}
                     </a>
                   </div>
-                </th>
-                <th className="px-6 py-4">
+                </TableHead>
+                <TableHead>
                   <div className="flex items-center gap-2">
                     <span>更新時間</span>
                     <a
-                      className="text-xs font-semibold text-slate-500 hover:text-slate-700"
+                      className="text-xs font-semibold"
                       href={buildQueryString({
                         project_id: projectIdFilter,
                         q: searchTerm,
@@ -677,193 +723,201 @@ export default async function AdminTasksPage({
                       {sortBy === "updated_at" ? (sortDir === "asc" ? "▲" : "▼") : "△"}
                     </a>
                   </div>
-                </th>
-                <th className="px-6 py-4 text-right">操作</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
+                </TableHead>
+                <TableHead className="text-right">操作</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
           {tasks?.map((t) => (
-                <tr key={t.id} className="hover:bg-slate-50 transition-colors group">
-                  <td className="px-6 py-4">
-                    <div className="font-medium text-slate-900 flex items-center gap-2">
-                      {t.code && <span className="text-xs bg-slate-100 px-1.5 py-0.5 rounded text-slate-500 font-mono">{t.code}</span>}
+                <TableRow key={t.id}>
+                  <TableCell className="font-medium">
+                    <div className="flex items-center gap-2">
+                      {t.code && <span className="text-xs bg-muted px-1.5 py-0.5 rounded text-muted-foreground font-mono">{t.code}</span>}
                       {t.name}
                     </div>
-                    <div className="text-xs text-slate-400 mt-0.5 font-mono">Seq: {t.seq}</div>
-                  </td>
-                  <td className="px-6 py-4">
-                    <div className="text-sm text-slate-900">{selectedProject?.name ?? "未知專案"}</div>
-                    <div className="text-xs text-slate-500">{t.phase_name}</div>
-                  </td>
-                  <td className="px-6 py-4">
-                    <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-slate-100 text-slate-700">
+                    <div className="text-xs text-muted-foreground mt-0.5 font-mono">Seq: {t.seq}</div>
+                  </TableCell>
+                  <TableCell>
+                    <div>{selectedProject?.name ?? "未知專案"}</div>
+                    <div className="text-xs text-muted-foreground">{t.phase_name}</div>
+                  </TableCell>
+                  <TableCell>
+                    <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-muted text-muted-foreground">
                       {unitNameById[t.unit_id] ?? "-"}
                     </span>
-                  </td>
-                  <td className="px-6 py-4">
+                  </TableCell>
+                  <TableCell>
                     <div className="flex items-center gap-2">
-                      <div className="w-16 h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                      <div className="w-16 h-1.5 bg-muted rounded-full overflow-hidden">
                         <div 
                           className={`h-full rounded-full ${t.progress >= 100 ? 'bg-green-500' : 'bg-blue-500'}`} 
                           style={{ width: `${t.progress}%` }}
                         ></div>
                       </div>
-                      <span className="text-xs font-medium text-slate-600">{t.progress}%</span>
+                      <span className="text-xs font-medium">{t.progress}%</span>
                     </div>
-                  </td>
-                  <td className="px-6 py-4 text-sm text-slate-500">
+                  </TableCell>
+                  <TableCell>
                     {new Date(t.updated_at).toLocaleDateString()}
-                  </td>
+                  </TableCell>
                   <td className="px-6 py-4 text-right">
-                    <div className="relative inline-block text-left">
-                      <input
-                        id={`task-edit-${t.id}`}
-                        type="checkbox"
-                        className="peer hidden"
-                      />
-                      <label
-                        htmlFor={`task-edit-${t.id}`}
-                        className="text-slate-400 hover:text-blue-600 cursor-pointer list-none p-1 rounded hover:bg-slate-100"
-                      >
-                        編輯
-                      </label>
-                      <label
-                        htmlFor={`task-edit-${t.id}`}
-                        className="fixed inset-0 bg-black/40 z-40 hidden peer-checked:block"
-                      />
-                      <div className="fixed inset-0 z-50 hidden items-center justify-center peer-checked:flex">
-                        <div className="w-[min(520px,92vw)] max-h-[90vh] overflow-y-auto bg-white rounded-xl shadow-xl border border-slate-200 p-4 text-left">
-                          <div className="flex items-center justify-between mb-3">
-                            <h4 className="font-bold text-slate-800 text-sm">編輯任務</h4>
-                            <label
-                              htmlFor={`task-edit-${t.id}`}
-                              className="text-slate-400 hover:text-slate-700 cursor-pointer"
-                            >
-                              ✕
-                            </label>
+                    <Dialog>
+                      <DialogTrigger asChild>
+                        <Button variant="ghost" size="sm">編輯</Button>
+                      </DialogTrigger>
+                      <DialogContent className="sm:max-w-[520px] max-h-[90vh] overflow-y-auto">
+                        <DialogHeader>
+                          <DialogTitle>編輯任務</DialogTitle>
+                        </DialogHeader>
+                        <form className="grid gap-4 py-4" action={updateTaskAction}>
+                          <input type="hidden" name="task_id" value={t.id} />
+                          <div className="grid grid-cols-2 gap-4">
+                            <Input name="phase_name" defaultValue={t.phase_name} placeholder="階段" disabled={!canUpdate} />
+                            <Input name="code" defaultValue={t.code ?? ""} placeholder="代碼" disabled={!canUpdate} />
                           </div>
-                          <form className="flex flex-col gap-3" action={updateTaskAction}>
-                            <input type="hidden" name="task_id" value={t.id} />
-                            <div className="grid grid-cols-2 gap-2">
-                              <input name="phase_name" defaultValue={t.phase_name} placeholder="階段" className="w-full p-2 border rounded text-xs" disabled={!canUpdate} />
-                              <input name="code" defaultValue={t.code ?? ""} placeholder="代碼" className="w-full p-2 border rounded text-xs" disabled={!canUpdate} />
-                            </div>
-                            <input name="name" defaultValue={t.name} placeholder="任務名稱" className="w-full p-2 border rounded text-xs" disabled={!canUpdate} />
-                            <div className="grid grid-cols-3 gap-2">
-                              <input name="seq" defaultValue={String(t.seq)} placeholder="序號" className="w-full p-2 border rounded text-xs" disabled={!canUpdate} />
-                              <input name="progress" defaultValue={String(t.progress)} placeholder="進度" className="w-full p-2 border rounded text-xs" disabled={!canUpdate} />
-                              <input name="duration_days" defaultValue={String(t.duration_days ?? 1)} placeholder="工期" className="w-full p-2 border rounded text-xs" disabled={!canUpdate} />
-                            </div>
-                            <input
-                              name="start_offset_days"
-                              defaultValue={String(t.start_offset_days ?? 0)}
-                              placeholder="開始偏移日"
-                              className="w-full p-2 border rounded text-xs"
-                              disabled={!canUpdate}
-                            />
-                            <select name="unit_id" defaultValue={t.unit_id} className="w-full p-2 border rounded text-xs" disabled={!canUpdate}>
+                          <Input name="name" defaultValue={t.name} placeholder="任務名稱" disabled={!canUpdate} />
+                          <div className="grid grid-cols-3 gap-4">
+                            <Input name="seq" defaultValue={String(t.seq)} placeholder="序號" disabled={!canUpdate} />
+                            <Input name="progress" defaultValue={String(t.progress)} placeholder="進度" disabled={!canUpdate} />
+                            <Input name="duration_days" defaultValue={String(t.duration_days ?? 1)} placeholder="工期" disabled={!canUpdate} />
+                          </div>
+                          <Input
+                            name="start_offset_days"
+                            defaultValue={String(t.start_offset_days ?? 0)}
+                            placeholder="開始偏移日"
+                            disabled={!canUpdate}
+                          />
+                          <Select name="unit_id" defaultValue={t.unit_id} disabled={!canUpdate}>
+                            <SelectTrigger>
+                              <SelectValue placeholder="選擇部門" />
+                            </SelectTrigger>
+                            <SelectContent>
                               {(units ?? []).map((unit) => (
-                                <option key={unit.id} value={unit.id}>
+                                <SelectItem key={unit.id} value={unit.id}>
                                   {unit.name}
-                                </option>
+                                </SelectItem>
                               ))}
-                            </select>
-                            <select name="owner_unit_id" defaultValue={t.owner_unit_id ?? ""} className="w-full p-2 border rounded text-xs" disabled={!canUpdate}>
-                              <option value="">選擇部門</option>
+                            </SelectContent>
+                          </Select>
+                          <Select
+                            name="owner_unit_id"
+                            defaultValue={t.owner_unit_id ?? EMPTY_SELECT_VALUE}
+                            disabled={!canUpdate}
+                          >
+                           <SelectTrigger>
+                              <SelectValue placeholder="負責部門" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value={EMPTY_SELECT_VALUE}>選擇部門</SelectItem>
                               {(units ?? []).map((unit) => (
-                                <option key={unit.id} value={unit.id}>
+                                <SelectItem key={unit.id} value={unit.id}>
                                   {unit.name}
-                                </option>
+                                </SelectItem>
                               ))}
-                            </select>
-                            <div className="border-t border-slate-100 my-1"></div>
-                            <input name="completed_at" placeholder="完成時間 (YYYY/MM/DD HH:mm)" className="w-full p-2 border rounded text-xs" disabled={!canUpdate} />
-                            <input name="action" placeholder="動作紀錄" className="w-full p-2 border rounded text-xs" disabled={!canUpdate} />
-                            <input name="note" placeholder="備註" className="w-full p-2 border rounded text-xs" disabled={!canUpdate} />
-                            <button type="submit" className="w-full bg-slate-800 hover:bg-slate-900 text-white py-2 rounded text-xs font-medium" disabled={!canUpdate}>
+                            </SelectContent>
+                          </Select>
+                          <div className="border-t pt-4 grid gap-4">
+                            <Input name="completed_at" placeholder="完成時間 (YYYY/MM/DD HH:mm)" disabled={!canUpdate} />
+                            <Input name="action" placeholder="動作紀錄" disabled={!canUpdate} />
+                            <Input name="note" placeholder="備註" disabled={!canUpdate} />
+                          </div>
+                          <DialogFooter>
+                            <Button type="submit" disabled={!canUpdate}>
                               更新任務
-                            </button>
-                          </form>
-                          
-                          {(filesByTask[t.id] ?? []).length > 0 && (
-                            <div className="mt-4 pt-3 border-t border-slate-100">
-                              <h5 className="text-xs font-bold text-slate-500 mb-2">已上傳檔案</h5>
-                              {(filesByTask[t.id] ?? []).map((file) => {
-                                const thumbSrc = getThumbnailSrc(file);
-                                return (
-                                  <div className="flex items-center gap-2 mb-2 p-1.5 bg-slate-50 rounded border border-slate-100" key={file.id}>
-                                    {thumbSrc ? (
-                                      <img className="w-8 h-8 rounded object-cover" src={thumbSrc} alt={file.name} loading="lazy" />
-                                    ) : (
-                                      <div className="w-8 h-8 rounded bg-slate-200 flex items-center justify-center text-[10px] text-slate-500">FILE</div>
-                                    )}
-                                    <div className="flex-1 min-w-0">
-                                      <div className="text-xs font-medium truncate">{file.name}</div>
-                                      <a className="text-[10px] text-blue-500 hover:underline truncate block" href={file.web_view_link} target="_blank" rel="noreferrer">
-                                        開啟連結
-                                      </a>
-                                    </div>
+                            </Button>
+                          </DialogFooter>
+                        </form>
+                        
+                        {(filesByTask[t.id] ?? []).length > 0 && (
+                          <div className="space-y-2">
+                            <h4 className="font-medium text-sm">已上傳檔案</h4>
+                            <div className="space-y-2 rounded-md border p-2">
+                            {(filesByTask[t.id] ?? []).map((file) => {
+                              const thumbSrc = getThumbnailSrc(file);
+                              return (
+                                <div className="flex items-center gap-2" key={file.id}>
+                                  {thumbSrc ? (
+                                    <img className="w-8 h-8 rounded object-cover" src={thumbSrc} alt={file.name} loading="lazy" />
+                                  ) : (
+                                    <div className="w-8 h-8 rounded bg-slate-200 flex items-center justify-center text-[10px] text-slate-500">FILE</div>
+                                  )}
+                                  <div className="flex-1 min-w-0">
+                                    <div className="text-xs font-medium truncate">{file.name}</div>
+                                    <a className="text-[10px] text-blue-500 hover:underline truncate block" href={file.web_view_link} target="_blank" rel="noreferrer">
+                                      開啟連結
+                                    </a>
                                   </div>
-                                );
-                              })}
+                                </div>
+                              );
+                            })}
                             </div>
-                          )}
+                          </div>
+                        )}
 
-                          {canDelete && (
-                            <div className="mt-4 pt-3 border-t border-slate-100">
-                              <ConfirmForm
-                                className="w-full"
-                                action={deleteTaskAction}
-                                confirmMessage="確定要刪除此任務嗎？相關檔案也會一起刪除。"
-                              >
-                                <input type="hidden" name="task_id" value={t.id} />
-                                {projectIdFilter && <input type="hidden" name="project_id" value={projectIdFilter} />}
-                                <button type="submit" className="w-full text-red-600 hover:bg-red-50 py-2 rounded text-xs font-medium transition-colors">
-                                  刪除任務
-                                </button>
-                              </ConfirmForm>
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    </div>
+                        {canDelete && (
+                          <div className="border-t pt-4">
+                            <AlertDialog>
+                              <AlertDialogTrigger asChild>
+                                <Button variant="destructive" className="w-full">刪除任務</Button>
+                              </AlertDialogTrigger>
+                              <AlertDialogContent>
+                                <AlertDialogHeader>
+                                  <AlertDialogTitle>確定要刪除此任務嗎？</AlertDialogTitle>
+                                  <AlertDialogDescription>
+                                    相關檔案也會一起刪除。這個操作無法復原。
+                                  </AlertDialogDescription>
+                                </AlertDialogHeader>
+                                <AlertDialogFooter>
+                                  <AlertDialogCancel>取消</AlertDialogCancel>
+                                  <form action={deleteTaskAction}>
+                                    <input type="hidden" name="task_id" value={t.id} />
+                                    {projectIdFilter && <input type="hidden" name="project_id" value={projectIdFilter} />}
+                                    <AlertDialogAction type="submit">繼續刪除</AlertDialogAction>
+                                  </form>
+                                </AlertDialogFooter>
+                              </AlertDialogContent>
+                            </AlertDialog>
+                          </div>
+                        )}
+                      </DialogContent>
+                    </Dialog>
                   </td>
-              </tr>
+              </TableRow>
           ))}
-            </tbody>
-          </table>
+            </TableBody>
+          </Table>
         </div>
       )}
 
       {!logErr && taskLogs && taskLogs.length > 0 && (
-        <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden mt-8">
-          <div className="px-6 py-4 border-b border-slate-200 bg-slate-50">
-            <h2 className="font-bold text-slate-800">任務變更紀錄</h2>
+        <div className="rounded-xl border bg-card text-card-foreground shadow-sm mt-8">
+          <div className="px-6 py-4 border-b">
+            <h2 className="font-bold">任務變更紀錄</h2>
           </div>
-          <table className="w-full text-left border-collapse">
-            <thead>
-              <tr className="bg-slate-50 border-b border-slate-200 text-xs uppercase text-slate-500 font-semibold tracking-wider">
-                <th className="px-6 py-3">任務</th>
-                <th className="px-6 py-3">動作</th>
-                <th className="px-6 py-3">人員</th>
-                <th className="px-6 py-3">時間</th>
-                <th className="px-6 py-3">備註</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>任務</TableHead>
+                <TableHead>動作</TableHead>
+                <TableHead>人員</TableHead>
+                <TableHead>時間</TableHead>
+                <TableHead>備註</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
               {taskLogs.map((log) => (
-                <tr key={log.id} className="hover:bg-slate-50">
-                  <td className="px-6 py-3 text-sm font-medium text-slate-900">{taskNameById[log.task_id] ?? "未知任務"}</td>
-                  <td className="px-6 py-3 text-sm text-slate-600">
-                    <span className="bg-slate-100 px-2 py-0.5 rounded text-xs">{log.action}</span>
-                  </td>
-                  <td className="px-6 py-3 text-sm text-slate-600">{userOptions.find((u) => u.id === log.user_id)?.displayName ?? "-"}</td>
-                  <td className="px-6 py-3 text-sm text-slate-500">{new Date(log.created_at).toLocaleString()}</td>
-                  <td className="px-6 py-3 text-sm text-slate-500">{log.note ?? "-"}</td>
-                </tr>
+                <TableRow key={log.id}>
+                  <TableCell className="font-medium">{taskNameById[log.task_id] ?? "未知任務"}</TableCell>
+                  <TableCell>
+                    <span className="bg-muted px-2 py-0.5 rounded-full text-xs">{log.action}</span>
+                  </TableCell>
+                  <TableCell>{userOptions.find((u) => u.id === log.user_id)?.displayName ?? "-"}</TableCell>
+                  <TableCell>{new Date(log.created_at).toLocaleString()}</TableCell>
+                  <TableCell>{log.note ?? "-"}</TableCell>
+                </TableRow>
               ))}
-            </tbody>
-          </table>
+            </TableBody>
+          </Table>
         </div>
       )}
     </div>

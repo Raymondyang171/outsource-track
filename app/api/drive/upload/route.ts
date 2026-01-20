@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { randomUUID } from "crypto";
 import { google } from "googleapis";
 import { Readable } from "stream";
 import sharp from "sharp";
@@ -23,6 +24,15 @@ type Compressed = {
   mimeType: string;
   originalSize: number;
 };
+
+function isInvalidGrantError(err: unknown) {
+  const message = err instanceof Error ? err.message : "";
+  const anyErr = err as { response?: { status?: number; data?: any } };
+  const status = anyErr?.response?.status;
+  const data = anyErr?.response?.data;
+  const errorValue = typeof data?.error === "string" ? data.error : "";
+  return status === 400 && (errorValue === "invalid_grant" || message.includes("invalid_grant"));
+}
 
 function getOAuthClient() {
   const clientId = process.env.GOOGLE_CLIENT_ID;
@@ -170,17 +180,29 @@ export async function POST(request: Request) {
 
   const folderId = process.env.GOOGLE_DRIVE_FOLDER_ID || DEFAULT_FOLDER_ID;
   const drive = google.drive({ version: "v3", auth: oauth });
-  const driveRes = await drive.files.create({
-    requestBody: {
-      name: displayName || file.name,
-      parents: [folderId],
-    },
-    media: {
-      mimeType: uploadMimeType,
-      body: Readable.from(buffer),
-    },
-    fields: "id,name,mimeType,webViewLink,thumbnailLink,modifiedTime,size",
-  });
+  let driveRes;
+  try {
+    driveRes = await drive.files.create({
+      requestBody: {
+        name: displayName || file.name,
+        parents: [folderId],
+      },
+      media: {
+        mimeType: uploadMimeType,
+        body: Readable.from(buffer),
+      },
+      fields: "id,name,mimeType,webViewLink,thumbnailLink,modifiedTime,size",
+    });
+  } catch (err: unknown) {
+    if (isInvalidGrantError(err)) {
+      return NextResponse.json(
+        { code: "NEED_REAUTH", provider: "google", traceId: randomUUID() },
+        { status: 401 }
+      );
+    }
+    const message = err instanceof Error ? err.message : "drive_upload_failed";
+    return NextResponse.json({ ok: false, error: message }, { status: 502 });
+  }
 
   const driveFile = driveRes.data;
   if (!driveFile.id) {

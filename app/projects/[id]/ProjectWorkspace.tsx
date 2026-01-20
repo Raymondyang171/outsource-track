@@ -4,6 +4,11 @@ import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Textarea } from "@/components/ui/textarea";
+import { Slider } from "@/components/ui/slider";
 import { createProjectTask, getTaskLogs, updateTaskAssignees, updateTaskProgress, updateTaskSchedule } from "./actions";
 import { useUploadOutbox } from "@/lib/client/outbox/uploads";
 import { getDeviceId } from "@/lib/device";
@@ -166,10 +171,47 @@ export default function ProjectWorkspace({
   const [collapsedIds, setCollapsedIds] = useState<Set<string>>(() => new Set());
   const [isPending, startTransition] = useTransition();
   const [isCreating, startCreate] = useTransition();
+  const { retryPendingUploads, resetReauthRequired } = useUploadOutbox();
+  const reauthUrl = process.env.NEXT_PUBLIC_GOOGLE_REAUTH_URL ?? "/login";
+  const reauthRetryKey = "drive_reauth_retry";
 
   useEffect(() => {
     setAssigneesByTaskIdState(assigneesByTaskId);
   }, [assigneesByTaskId]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const raw = window.sessionStorage.getItem(reauthRetryKey);
+    if (!raw) return;
+    window.sessionStorage.removeItem(reauthRetryKey);
+    try {
+      const payload = JSON.parse(raw);
+      if (payload?.type === "delete" && payload.taskId && payload.fileId) {
+        void deleteFile(payload.taskId, payload.fileId, { skipConfirm: true, autoRetry: true });
+      }
+      if (payload?.type === "uploads") {
+        void (async () => {
+          await resetReauthRequired();
+          await retryPendingUploads();
+        })();
+      }
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const handler = (event: Event) => {
+      const detail = (event as CustomEvent).detail ?? {};
+      const go = window.confirm("需要重新授權，是否前往重新授權？");
+      if (!go) return;
+      window.sessionStorage.setItem(reauthRetryKey, JSON.stringify({ type: "uploads", detail }));
+      window.location.href = reauthUrl;
+    };
+    window.addEventListener("drive-reauth-required", handler);
+    return () => window.removeEventListener("drive-reauth-required", handler);
+  }, [reauthUrl]);
 
   const sendLog = (payload: Record<string, any>) => {
     try {
@@ -640,19 +682,55 @@ export default function ProjectWorkspace({
     setAssigneeMsg("已更新指派");
   }
 
-  async function deleteFile(taskId: string, fileId: string) {
+  async function deleteFile(
+    taskId: string,
+    fileId: string,
+    options?: { skipConfirm?: boolean; autoRetry?: boolean }
+  ) {
     if (isViewer) return;
-    const confirmed = window.confirm("確定要刪除此檔案嗎？");
-    if (!confirmed) return;
+    if (!options?.skipConfirm) {
+      const confirmed = window.confirm("確定要刪除此檔案嗎？");
+      if (!confirmed) return;
+    }
     try {
       const res = await safeFetch("/api/drive/delete", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ item_id: fileId }),
       });
-      const payload = await res.json().catch(() => ({}));
       if (!res.ok) {
-        const msg = payload?.error ?? "delete_failed";
+        const contentType = res.headers.get("content-type") || "";
+        const rawText = await res.text();
+        let payload: { code?: string; message?: string } | null = null;
+        if (rawText) {
+          if (contentType.includes("application/json")) {
+            try {
+              payload = JSON.parse(rawText) as { code?: string; message?: string };
+            } catch {
+              payload = { message: rawText };
+            }
+          } else {
+            payload = { message: rawText };
+          }
+        }
+        const shouldReauth =
+          res.status === 401 || res.status === 403 || payload?.code === "NEED_REAUTH";
+        if (shouldReauth) {
+          if (options?.autoRetry) {
+            alert("需要重新授權");
+            return;
+          }
+          const go = window.confirm("需要重新授權，是否前往重新授權？");
+          if (go) {
+            window.sessionStorage.setItem(
+              reauthRetryKey,
+              JSON.stringify({ type: "delete", taskId, fileId })
+            );
+            window.location.href = reauthUrl;
+          }
+          return;
+        }
+        const msg = payload?.message ?? payload?.code ?? `request_failed_status_${res.status}`;
         alert(`刪除失敗：${msg}`);
         return;
       }
@@ -877,19 +955,19 @@ export default function ProjectWorkspace({
   }
 
   return (
-    <div className="page">
-      <div className="page-header">
+    <div className="space-y-6 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+      <div className="flex items-center justify-between">
         <div>
-          <div className="page-title">{project.name}</div>
-          <div className="page-subtitle">
+          <h1 className="text-2xl font-bold">{project.name}</h1>
+          <p className="text-muted-foreground">
             狀態 {formatStatus(project.status)} ・開始 {formatDateString(project.start_date)}
-          </div>
+          </p>
         </div>
-        <div className="topbar-right">
+        <div className="flex items-center gap-2">
           <span className="badge">{role ?? "member"}</span>
-          <button className="btn btn-ghost" type="button" onClick={handleExportReport}>
+          <Button variant="ghost" type="button" onClick={handleExportReport}>
             匯出報表
-          </button>
+          </Button>
         </div>
       </div>
 
@@ -975,50 +1053,54 @@ export default function ProjectWorkspace({
           <div className="card">
             <div className="card-header">
               <div className="card-title">時間軸</div>
-              <div className="topbar-right">
-                <button className="btn btn-primary" type="button" onClick={() => setCreateOpen((v) => !v)}>
+              <div className="flex items-center gap-2">
+                <Button type="button" onClick={() => setCreateOpen((v) => !v)}>
                   新增任務
-                </button>
-                <button className="btn btn-ghost" type="button" onClick={() => openFlagManager(selectedId)}>
+                </Button>
+                <Button variant="ghost" type="button" onClick={() => openFlagManager(selectedId)}>
                   旗標管理
-                </button>
+                </Button>
                 <span className="badge">可拖曳與縮放</span>
               </div>
             </div>
 
             {createOpen && (
-              <div className="admin-form-grid" style={{ padding: 0, border: "none" }}>
-                <input
+              <div className="grid grid-cols-1 md:grid-cols-5 gap-3 p-4 border-t">
+                <Input
                   placeholder="任務名稱"
                   value={createName}
                   onChange={(e) => setCreateName(e.target.value)}
                 />
-                <input
+                <Input
                   placeholder="階段名稱 (Phase)"
                   value={createPhase}
                   onChange={(e) => setCreatePhase(e.target.value)}
                 />
-                <select
-                  className="select"
-                  value={createStartIndex}
-                  onChange={(e) => setCreateStartIndex(Number(e.target.value))}
+                <Select
+                  value={String(createStartIndex)}
+                  onValueChange={(val) => setCreateStartIndex(Number(val))}
                 >
-                  {dayList.map((day, index) => (
-                    <option key={`create-day-${index}`} value={index}>
-                      開始日期 {formatDate(day)}
-                    </option>
-                  ))}
-                </select>
-                <input
+                  <SelectTrigger>
+                    <SelectValue placeholder="開始日期" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {dayList.map((day, index) => (
+                      <SelectItem key={`create-day-${index}`} value={String(index)}>
+                        開始日期 {formatDate(day)}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Input
                   type="number"
                   placeholder="工期 (天)"
                   value={createDuration}
                   onChange={(e) => setCreateDuration(Number(e.target.value))}
                 />
-                <button type="button" onClick={onCreateTask} disabled={isCreating || isViewer}>
+                <Button type="button" onClick={onCreateTask} disabled={isCreating || isViewer}>
                   {isCreating ? "新增中..." : "確認新增"}
-                </button>
-                {createMsg && <div className="page-subtitle">{createMsg}</div>}
+                </Button>
+                {createMsg && <div className="page-subtitle md:col-span-5">{createMsg}</div>}
               </div>
             )}
           </div>
@@ -1140,130 +1222,148 @@ export default function ProjectWorkspace({
             ))}
           </div>
           {flagMenu && (
-            <div className="flag-menu-backdrop" onClick={closeFlagMenu}>
-              <div
-                className="flag-menu"
-                style={{ left: flagMenu.x, top: flagMenu.y }}
-                onClick={(event) => event.stopPropagation()}
-              >
-                <div className="flag-menu-title">新增旗標</div>
-                <label className="page-subtitle" htmlFor="flag-menu-text">
-                  內容
-                </label>
-                <input
-                  id="flag-menu-text"
-                  placeholder="輸入提醒內容"
-                  value={flagMenu.text}
-                  onChange={(e) =>
-                    setFlagMenu((prev) => (prev ? { ...prev, text: e.target.value } : prev))
-                  }
-                />
-                <label className="page-subtitle" htmlFor="flag-menu-level">
-                  類型
-                </label>
-                <select
-                  id="flag-menu-level"
-                  className="select"
-                  value={flagMenu.level}
-                  onChange={(e) =>
-                    setFlagMenu((prev) =>
-                      prev ? { ...prev, level: e.target.value as FlagLevel } : prev
-                    )
-                  }
-                >
-                  <option value="warning">注意 (黃色)</option>
-                  <option value="danger">危險 (紅色)</option>
-                </select>
-                <label className="page-subtitle" htmlFor="flag-menu-day">
-                  Day
-                </label>
-                <input
-                  id="flag-menu-day"
-                  type="number"
-                  value={flagMenu.offset_days}
-                  onChange={(e) =>
-                    setFlagMenu((prev) =>
-                      prev ? { ...prev, offset_days: Number(e.target.value) } : prev
-                    )
-                  }
-                />
-                <label className="page-subtitle" htmlFor="flag-menu-hour">
-                  Hour (0-23)
-                </label>
-                <input
-                  id="flag-menu-hour"
-                  type="number"
-                  min={0}
-                  max={23}
-                  value={flagMenu.offset_hours}
-                  onChange={(e) =>
-                    setFlagMenu((prev) =>
-                      prev ? { ...prev, offset_hours: Number(e.target.value) } : prev
-                    )
-                  }
-                />
-                <div className="flag-menu-actions">
-                  <button type="button" className="btn btn-primary" onClick={addFlagFromMenu}>
-                    新增
-                  </button>
-                  <button type="button" className="btn btn-ghost" onClick={closeFlagMenu}>
-                    取消
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
-          {flagManager.open && (
-            <div className="flag-manager-backdrop" onClick={closeFlagManager}>
-              <div className="flag-manager" onClick={(event) => event.stopPropagation()}>
-                <div className="flag-menu-title">旗標管理</div>
-                {!flagManager.taskId && <div className="page-subtitle">請先選擇任務。</div>}
-                {flagManager.taskId && (
-                  <>
-                    <div className="page-subtitle">
-                      任務：{localTasks.find((task) => task.id === flagManager.taskId)?.name ?? "未知"}
-                    </div>
-                    {(flagsByTask[flagManager.taskId] ?? []).length === 0 && (
-                      <div className="page-subtitle">尚無旗標。</div>
-                    )}
-                    {(flagsByTask[flagManager.taskId] ?? []).map((flag) => {
-                      const task = localTasks.find((item) => item.id === flagManager.taskId);
-                      if (!task) return null;
-                      const flagDate = new Date(startDate);
-                      flagDate.setDate(
-                        flagDate.getDate() + task.start_offset_days + Math.max(0, flag.offset_days)
-                      );
-                      flagDate.setHours(Math.min(23, Math.max(0, flag.offset_hours)), 0, 0, 0);
-                      return (
-                        <div className="flag-manager-item" key={`manager-${flag.id}`}>
-                          <div>
-                            <div>{flag.text}</div>
-                            <div className="page-subtitle">
-                              {flag.level === "danger" ? "危險" : "注意"} ・{formatDate(flagDate)} ・
-                              {String(flag.offset_hours).padStart(2, "0")}:00
-                            </div>
-                          </div>
-                          <button
-                            className="btn btn-ghost"
-                            type="button"
-                            onClick={() => deleteFlag(flagManager.taskId!, flag.id)}
-                          >
-                            刪除
-                          </button>
+            <Dialog open={flagMenu !== null} onOpenChange={(open) => !open && closeFlagMenu()}>
+                <DialogContent className="sm:max-w-[425px]">
+                    <DialogHeader>
+                        <DialogTitle>新增旗標</DialogTitle>
+                    </DialogHeader>
+                    <div className="grid gap-4 py-4">
+                        <div className="grid grid-cols-4 items-center gap-4">
+                            <label htmlFor="flag-menu-text" className="text-right">
+                            內容
+                            </label>
+                            <Input
+                            id="flag-menu-text"
+                            placeholder="輸入提醒內容"
+                            value={flagMenu.text}
+                            onChange={(e) =>
+                                setFlagMenu((prev) => (prev ? { ...prev, text: e.target.value } : prev))
+                            }
+                            className="col-span-3"
+                            />
                         </div>
-                      );
-                    })}
-                    <div className="page-subtitle">右鍵點任務條可新增旗標。</div>
-                  </>
-                )}
-                <div className="flag-menu-actions">
-                  <button type="button" className="btn btn-ghost" onClick={closeFlagManager}>
-                    關閉
-                  </button>
-                </div>
-              </div>
-            </div>
+                        <div className="grid grid-cols-4 items-center gap-4">
+                            <label htmlFor="flag-menu-level" className="text-right">
+                            類型
+                            </label>
+                            <Select
+                                value={flagMenu.level}
+                                onValueChange={(value) =>
+                                    setFlagMenu((prev) =>
+                                    prev ? { ...prev, level: value as FlagLevel } : prev
+                                    )
+                                }
+                            >
+                                <SelectTrigger className="col-span-3">
+                                    <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="warning">注意 (黃色)</SelectItem>
+                                    <SelectItem value="danger">危險 (紅色)</SelectItem>
+                                </SelectContent>
+                            </Select>
+                        </div>
+                        <div className="grid grid-cols-4 items-center gap-4">
+                            <label htmlFor="flag-menu-day" className="text-right">
+                            Day
+                            </label>
+                            <Input
+                            id="flag-menu-day"
+                            type="number"
+                            value={flagMenu.offset_days}
+                            onChange={(e) =>
+                                setFlagMenu((prev) =>
+                                prev ? { ...prev, offset_days: Number(e.target.value) } : prev
+                                )
+                            }
+                            className="col-span-3"
+                            />
+                        </div>
+                        <div className="grid grid-cols-4 items-center gap-4">
+                            <label htmlFor="flag-menu-hour" className="text-right">
+                            Hour (0-23)
+                            </label>
+                            <Input
+                            id="flag-menu-hour"
+                            type="number"
+                            min={0}
+                            max={23}
+                            value={flagMenu.offset_hours}
+                            onChange={(e) =>
+                                setFlagMenu((prev) =>
+                                prev ? { ...prev, offset_hours: Number(e.target.value) } : prev
+                                )
+                            }
+                            className="col-span-3"
+                            />
+                        </div>
+                    </div>
+                    <DialogFooter>
+                        <Button type="button" variant="ghost" onClick={closeFlagMenu}>
+                            取消
+                        </Button>
+                        <Button type="button" onClick={addFlagFromMenu}>
+                            新增
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
           )}
+          <Dialog open={flagManager.open} onOpenChange={(open) => !open && closeFlagManager()}>
+            <DialogContent>
+                <DialogHeader>
+                    <DialogTitle>旗標管理</DialogTitle>
+                </DialogHeader>
+                <div className="grid gap-4 py-4">
+                  {!flagManager.taskId && <p className="text-muted-foreground">請先選擇任務。</p>}
+                  {flagManager.taskId && (
+                    <div className="space-y-4">
+                      <p>
+                        任務：{localTasks.find((task) => task.id === flagManager.taskId)?.name ?? "未知"}
+                      </p>
+                      {(flagsByTask[flagManager.taskId] ?? []).length === 0 && (
+                        <p className="text-muted-foreground text-sm">尚無旗標。</p>
+                      )}
+                      <div className="space-y-2">
+                        {(flagsByTask[flagManager.taskId] ?? []).map((flag) => {
+                          const task = localTasks.find((item) => item.id === flagManager.taskId);
+                          if (!task) return null;
+                          const flagDate = new Date(startDate);
+                          flagDate.setDate(
+                            flagDate.getDate() + task.start_offset_days + Math.max(0, flag.offset_days)
+                          );
+                          flagDate.setHours(Math.min(23, Math.max(0, flag.offset_hours)), 0, 0, 0);
+                          return (
+                            <div className="flex items-center justify-between rounded-md border p-3" key={`manager-${flag.id}`}>
+                              <div>
+                                <p className="font-medium">{flag.text}</p>
+                                <p className="text-muted-foreground text-sm">
+                                  {flag.level === "danger" ? "危險" : "注意"} ・{formatDate(flagDate)} ・
+                                  {String(flag.offset_hours).padStart(2, "0")}:00
+                                </p>
+                              </div>
+                              <Button
+                                variant="ghost"
+                                type="button"
+                                onClick={() => deleteFlag(flagManager.taskId!, flag.id)}
+                              >
+                                刪除
+                              </Button>
+                            </div>
+                          );
+                        })}
+                      </div>
+                      <p className="text-muted-foreground text-sm pt-2 border-t">右鍵點擊任務條可新增旗標。</p>
+                    </div>
+                  )}
+                </div>
+                <DialogFooter>
+                    <Button type="button" variant="ghost" onClick={closeFlagManager}>
+                        關閉
+                    </Button>
+                </DialogFooter>
+            </DialogContent>
+          </Dialog>
         </>
       )}
 
@@ -1273,27 +1373,28 @@ export default function ProjectWorkspace({
             <div className="card-title">專案檔案</div>
             <span className="badge">依任務分組</span>
           </div>
-          <div className="page-subtitle">點任務可快速新增連結。</div>
-          <div className="board" style={{ marginTop: 16 }}>
+          <p className="text-muted-foreground">點任務可快速新增連結。</p>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mt-4">
             {localTasks.map((task) => (
-              <div className="board-column" key={`files-${task.id}`}>
-                <div className="card-header">
-                  <div className="card-title">{task.name}</div>
-                  <button className="btn btn-ghost" type="button" onClick={() => openTask(task)}>
+              <div className="rounded-lg border p-4 space-y-3" key={`files-${task.id}`}>
+                <div className="flex items-center justify-between">
+                  <h3 className="font-semibold">{task.name}</h3>
+                  <Button variant="ghost" size="sm" type="button" onClick={() => openTask(task)}>
                     新增
-                  </button>
+                  </Button>
                 </div>
                 {(filesByTask[task.id] ?? []).length === 0 && (
-                  <div className="page-subtitle">尚無檔案</div>
+                  <p className="text-muted-foreground text-sm">尚無檔案</p>
                 )}
+                <div className="space-y-2">
                 {(filesByTask[task.id] ?? []).map((file) => {
                   const thumbSrc = getThumbnailSrc(file);
                   return (
-                    <div className="file-item" key={file.id}>
+                    <div className="flex items-center gap-3 rounded-md border p-2" key={file.id}>
                       {thumbSrc ? (
                         <>
                           <img
-                            className="file-thumb"
+                            className="w-10 h-10 rounded object-cover"
                             src={thumbSrc}
                             alt={file.name}
                             loading="lazy"
@@ -1302,32 +1403,37 @@ export default function ProjectWorkspace({
                             onError={() => setThumbReady((prev) => ({ ...prev, [file.id]: false }))}
                           />
                           {!thumbReady[file.id] && (
-                            <div className="file-thumb file-thumb-fallback">檔案</div>
+                            <div className="w-10 h-10 rounded bg-muted flex items-center justify-center text-muted-foreground text-xs">檔案</div>
                           )}
                         </>
                       ) : (
-                        <div className="file-thumb file-thumb-fallback">檔案</div>
+                        <div className="w-10 h-10 rounded bg-muted flex items-center justify-center text-muted-foreground text-xs">檔案</div>
                       )}
-                      <div className="file-meta">
-                        <div className="file-title">{file.name}</div>
-                        <div className="topbar-right">
-                          <a className="btn btn-ghost" href={file.url} target="_blank" rel="noreferrer">
-                            開啟檔案
-                          </a>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium truncate">{file.name}</p>
+                        <div className="flex items-center gap-2">
+                          <Button asChild variant="link" size="sm" className="p-0 h-auto">
+                            <a href={file.url} target="_blank" rel="noreferrer">
+                              開啟檔案
+                            </a>
+                          </Button>
                           {!isViewer && (
-                            <button
-                              className="btn btn-ghost"
+                            <Button
+                              variant="link"
+                              size="sm"
+                              className="p-0 h-auto text-destructive"
                               type="button"
                               onClick={() => deleteFile(task.id, file.id)}
                             >
                               刪除
-                            </button>
+                            </Button>
                           )}
                         </div>
                       </div>
                     </div>
                   );
                 })}
+                </div>
               </div>
             ))}
           </div>
@@ -1345,325 +1451,327 @@ export default function ProjectWorkspace({
         </div>
       )}
 
-      {panelOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center">
-          <div
-            className="absolute inset-0 bg-black/40"
-            onClick={() => setPanelOpen(false)}
-          />
-          <div className="relative z-10 w-[min(960px,95vw)] max-h-[92vh] overflow-y-auto rounded-2xl bg-white shadow-2xl">
-            <div className="flex items-center justify-between border-b border-slate-200 px-6 py-4">
-              <div className="text-lg font-semibold text-slate-800">任務詳情</div>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                onClick={() => setPanelOpen(false)}
-                aria-label="關閉"
-              >
-                ✕
-              </Button>
-            </div>
+      <Dialog open={panelOpen} onOpenChange={setPanelOpen}>
+        <DialogContent className="max-w-[min(960px,95vw)] max-h-[92vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>任務詳情</DialogTitle>
+          </DialogHeader>
+          {!selectedTask && <div className="p-6 text-muted-foreground">尚未選擇任務</div>}
+          {selectedTask && (
+            <div className="space-y-6">
+              <div className="px-6 space-y-1.5">
+                <h2 className="text-xl font-semibold">
+                  {selectedTask.code ? `[${selectedTask.code}] ` : ""}
+                  {selectedTask.name}
+                </h2>
+                <p className="text-muted-foreground">階段 {selectedTask.phase_name}</p>
+                <p className="text-muted-foreground">
+                  開始 {formatDate(getTaskStartDate(selectedTask))} ・結束{" "}
+                  {formatDate(getTaskEndDate(selectedTask))} ・工期 {selectedTask.duration_days} 天
+                </p>
+              </div>
 
-            <div className="p-6">
-              {!selectedTask && <div className="page-subtitle">尚未選擇任務</div>}
-
-              {selectedTask && (
-                <div className="panel-stack">
-                  <div className="card" style={{ padding: 14 }}>
-                    <div className="card-title">
-                      {selectedTask.code ? `[${selectedTask.code}] ` : ""}
-                      {selectedTask.name}
-                    </div>
-                    <div className="page-subtitle">階段 {selectedTask.phase_name}</div>
-                    <div className="page-subtitle">
-                      開始 {formatDate(getTaskStartDate(selectedTask))} ・結束{" "}
-                      {formatDate(getTaskEndDate(selectedTask))} ・工期 {selectedTask.duration_days} 天
-                    </div>
-                  </div>
-
-                  <div className="card" style={{ padding: 14 }}>
-                    <div className="card-header">
-                      <div className="card-title">指派負責人</div>
-                    </div>
-                    <div className="page-subtitle">
-                      選擇部門代表該部門所有人皆為負責人，也可額外指定個人。
-                    </div>
-                    <label className="page-subtitle" htmlFor="task-owner-unit">
+              <div className="px-6 space-y-4">
+                <h3 className="font-semibold">指派負責人</h3>
+                <p className="text-muted-foreground text-sm">
+                  選擇部門代表該部門所有人皆為負責人，也可額外指定個人。
+                </p>
+                <div className="space-y-2">
+                    <label className="text-sm font-medium" htmlFor="task-owner-unit">
                       負責單位
                     </label>
-                    <select
-                      id="task-owner-unit"
-                      className="select"
-                      value={assigneeUnitId}
-                      onChange={(e) => setAssigneeUnitId(e.target.value)}
+                    <Select
+                      value={assigneeUnitId || "all"}
+                      onValueChange={(value) => setAssigneeUnitId(value === "all" ? "" : value)}
                       disabled={isViewer}
                     >
-                      <option value="">未指定</option>
-                      {units.map((unit) => (
-                        <option key={unit.id} value={unit.id}>
-                          {unit.name}
-                        </option>
-                      ))}
-                    </select>
-                    <label className="page-subtitle" htmlFor="task-owner-user-search">
+                      <SelectTrigger id="task-owner-unit">
+                        <SelectValue placeholder="未指定" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">未指定</SelectItem>
+                        {units.map((unit) => (
+                          <SelectItem key={unit.id} value={unit.id}>
+                            {unit.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                </div>
+                <div className="space-y-2">
+                    <label className="text-sm font-medium" htmlFor="task-owner-user-search">
                       負責個人（可複選）
                     </label>
-                    <input
+                    <Input
                       id="task-owner-user-search"
-                      className="input"
                       placeholder="搜尋部門 / 名字 / 職稱 / 權限"
                       value={assigneeSearch}
                       onChange={(e) => setAssigneeSearch(e.target.value)}
                       disabled={isViewer}
                     />
-                    <div className="page-subtitle">已選擇 {assigneeUserIds.length} 位</div>
-                    <div
-                      className="card"
-                      style={{ padding: 10, marginTop: 8, maxHeight: 220, overflowY: "auto" }}
-                    >
-                      {filteredMemberOptions.length === 0 && (
-                        <div className="page-subtitle">找不到符合條件的成員</div>
-                      )}
-                      {filteredMemberOptions.map((member) => {
-                        const checked = assigneeUserIds.includes(member.user_id);
-                        return (
-                          <label
-                            key={`${member.user_id}-${member.unit_id}`}
-                            className="page-subtitle"
-                            style={{
-                              display: "flex",
-                              alignItems: "center",
-                              gap: 8,
-                              padding: "4px 0",
-                            }}
-                          >
-                            <input
-                              type="checkbox"
-                              checked={checked}
-                              onChange={() => {
-                                setAssigneeUserIds((prev) => {
-                                  if (prev.includes(member.user_id)) {
-                                    return prev.filter((id) => id !== member.user_id);
-                                  }
-                                  return [...prev, member.user_id];
-                                });
-                              }}
-                              disabled={isViewer}
-                            />
-                            <span>{member.label}</span>
-                          </label>
-                        );
-                      })}
-                    </div>
-                    <div className="topbar-right">
-                      <button
-                        className="btn btn-primary"
-                        type="button"
-                        onClick={saveAssignees}
-                        disabled={isViewer}
+                </div>
+                <p className="text-sm text-muted-foreground">已選擇 {assigneeUserIds.length} 位</p>
+                <div
+                  className="border rounded-md p-2"
+                  style={{ maxHeight: 220, overflowY: "auto" }}
+                >
+                  {filteredMemberOptions.length === 0 && (
+                    <p className="text-muted-foreground text-center text-sm p-4">找不到符合條件的成員</p>
+                  )}
+                  {filteredMemberOptions.map((member) => {
+                    const checked = assigneeUserIds.includes(member.user_id);
+                    return (
+                      <label
+                        key={`${member.user_id}-${member.unit_id}`}
+                        className="flex items-center gap-2 p-2 rounded-md hover:bg-accent"
                       >
-                        儲存指派
-                      </button>
-                    </div>
-                    {assigneeMsg && <div className="page-subtitle">{assigneeMsg}</div>}
-                  </div>
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={() => {
+                            setAssigneeUserIds((prev) => {
+                              if (prev.includes(member.user_id)) {
+                                return prev.filter((id) => id !== member.user_id);
+                              }
+                              return [...prev, member.user_id];
+                            });
+                          }}
+                          disabled={isViewer}
+                          className="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                        />
+                        <span className="text-sm">{member.label}</span>
+                      </label>
+                    );
+                  })}
+                </div>
+                <div className="flex justify-end">
+                  <Button
+                    type="button"
+                    onClick={saveAssignees}
+                    disabled={isViewer}
+                  >
+                    儲存指派
+                  </Button>
+                </div>
+                {assigneeMsg && <p className="text-sm text-muted-foreground">{assigneeMsg}</p>}
+              </div>
 
-                  <div className="card" style={{ padding: 14 }}>
-                    <div className="card-header">
-                      <div className="card-title">進度回報</div>
-                      <span className="badge">{progress}%</span>
-                    </div>
-                    <label className="page-subtitle" htmlFor="task-status">
+              <div className="px-6 space-y-4">
+                <div className="flex items-center justify-between">
+                  <h3 className="font-semibold">進度回報</h3>
+                  <span className="badge">{progress}%</span>
+                </div>
+                <div className="space-y-2">
+                    <label className="text-sm font-medium" htmlFor="task-status">
                       任務狀態
                     </label>
-                    <select
-                      id="task-status"
-                      className="select"
+                    <Select
                       value={getTaskStatus(selectedTask)}
-                      onChange={(e) => onStatusChange(e.target.value as TaskStatus)}
+                      onValueChange={(val) => onStatusChange(val as TaskStatus)}
                       disabled={isViewer}
                     >
-                      <option value="ready">待處理</option>
-                      <option value="in_progress">進行中</option>
-                      <option value="completed">已完成</option>
-                      <option value="error">異常</option>
-                    </select>
-                    <label className="page-subtitle" htmlFor="task-progress">
+                      <SelectTrigger id="task-status">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="ready">待處理</SelectItem>
+                        <SelectItem value="in_progress">進行中</SelectItem>
+                        <SelectItem value="completed">已完成</SelectItem>
+                        <SelectItem value="error">異常</SelectItem>
+                      </SelectContent>
+                    </Select>
+                </div>
+                <div className="space-y-2">
+                    <label className="text-sm font-medium" htmlFor="task-progress">
                       完成百分比 (0-100)
                     </label>
-                    <input
+                    <Slider
                       id="task-progress"
-                      className="range"
-                      type="range"
                       min={0}
                       max={100}
-                      value={progress}
-                      onChange={(e) => setProgress(Number(e.target.value))}
+                      value={[progress]}
+                      onValueChange={(value) => setProgress(value[0])}
                       disabled={isViewer}
                     />
-                    <label className="page-subtitle" htmlFor="task-note">
+                </div>
+                <div className="space-y-2">
+                    <label className="text-sm font-medium" htmlFor="task-note">
                       回報說明
                     </label>
-                    <textarea
+                    <Textarea
                       id="task-note"
-                      className="textarea"
                       placeholder="進度備註"
                       value={note}
                       onChange={(e) => setNote(e.target.value)}
                       rows={3}
                       disabled={isViewer}
                     />
-                    <div className="topbar-right">
-                      <button className="btn btn-primary" type="button" onClick={saveProgress} disabled={isPending || isViewer}>
-                        {isPending ? "儲存中..." : "儲存"}
-                      </button>
-                      <button className="btn btn-ghost" type="button" onClick={() => setPanelOpen(false)}>
-                        關閉
-                      </button>
-                    </div>
-                    {message && <div className="page-subtitle">{message}</div>}
-                  </div>
+                </div>
+                <div className="flex justify-end gap-2">
+                  <Button type="button" variant="ghost" onClick={() => setPanelOpen(false)}>
+                    關閉
+                  </Button>
+                  <Button type="button" onClick={saveProgress} disabled={isPending || isViewer}>
+                    {isPending ? "儲存中..." : "儲存"}
+                  </Button>
+                </div>
+                {message && <p className="text-sm text-muted-foreground">{message}</p>}
+              </div>
 
-                  <div className="card" style={{ padding: 14 }}>
-                    <div className="card-header">
-                      <div className="card-title">子任務</div>
-                      <span className="badge">最多兩層</span>
-                    </div>
-                    <div className="page-subtitle">點子任務可再次編輯。</div>
-                    {(localTasks.filter((task) => task.parent_id === selectedTask.id) ?? []).length === 0 && (
-                      <div className="page-subtitle">尚無子任務</div>
-                    )}
-                    {(localTasks.filter((task) => task.parent_id === selectedTask.id) ?? []).map((task) => (
-                      <div className="task-card task-card-level-1" key={`sub-${task.id}`} onClick={() => openTask(task)}>
-                        <div>{task.name}</div>
-                        <div className="page-subtitle">工期 {task.duration_days} 天</div>
-                      </div>
-                    ))}
-                    <div className="admin-form-grid" style={{ padding: 0, border: "none" }}>
-                      <label className="page-subtitle" htmlFor="subtask-name">
-                        子任務名稱
-                      </label>
-                      <input
-                        id="subtask-name"
-                        placeholder="子任務名稱"
-                        value={subtaskName}
-                        onChange={(e) => setSubtaskName(e.target.value)}
-                        disabled={isViewer}
-                      />
-                      <label className="page-subtitle" htmlFor="subtask-start-date">
-                        開始日期
-                      </label>
-                      <select
-                        id="subtask-start-date"
-                        className="select"
-                        value={subtaskStartIndex}
-                        onChange={(e) => setSubtaskStartIndex(Number(e.target.value))}
-                        disabled={isViewer}
-                      >
-                        {dayList.map((day, index) => (
-                          <option key={`subtask-day-${index}`} value={index}>
-                            開始日期 {formatDate(day)}
-                          </option>
-                        ))}
-                      </select>
-                      <label className="page-subtitle" htmlFor="subtask-duration">
-                        工期 (天)
-                      </label>
-                      <input
-                        id="subtask-duration"
-                        type="number"
-                        placeholder="工期 (天)"
-                        value={subtaskDuration}
-                        onChange={(e) => setSubtaskDuration(Number(e.target.value))}
-                        disabled={isViewer}
-                      />
-                      <button type="button" onClick={onCreateSubtask} disabled={isViewer}>
-                        新增子任務
-                      </button>
-                      {subtaskMsg && <div className="page-subtitle">{subtaskMsg}</div>}
+              <div className="px-6 space-y-4">
+                <div className="flex items-center justify-between">
+                  <h3 className="font-semibold">子任務</h3>
+                  <span className="badge">最多兩層</span>
+                </div>
+                <p className="text-muted-foreground text-sm">點子任務可再次編輯。</p>
+                {(localTasks.filter((task) => task.parent_id === selectedTask.id) ?? []).length === 0 && (
+                  <p className="text-sm text-muted-foreground">尚無子任務</p>
+                )}
+                {(localTasks.filter((task) => task.parent_id === selectedTask.id) ?? []).map((task) => (
+                  <div className="border rounded-lg p-3 flex justify-between items-center" key={`sub-${task.id}`} onClick={() => openTask(task)}>
+                    <div>
+                      <p className="font-medium">{task.name}</p>
+                      <p className="text-sm text-muted-foreground">工期 {task.duration_days} 天</p>
                     </div>
                   </div>
-
-                  <div className="card" style={{ padding: 14 }}>
-                    <div className="card-header">
-                      <div className="card-title">文件連結</div>
-                    </div>
-                    <FileUploadForm
-                      taskId={selectedTask.id}
-                      onUploaded={(item) => addUploadedFile(selectedTask.id, item)}
+                ))}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-4 border-t">
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium" htmlFor="subtask-name">
+                      子任務名稱
+                    </label>
+                    <Input
+                      id="subtask-name"
+                      placeholder="子任務名稱"
+                      value={subtaskName}
+                      onChange={(e) => setSubtaskName(e.target.value)}
                       disabled={isViewer}
                     />
-                    <div className="page-subtitle">目前連結數量 {filesByTask[selectedTask.id]?.length ?? 0}</div>
-                    <div>
-                      {(filesByTask[selectedTask.id] ?? []).map((file) => {
-                        const thumbSrc = getThumbnailSrc(file);
-                        return (
-                          <div className="file-item" key={file.id}>
-                            {thumbSrc ? (
-                              <>
-                                <img
-                                  className="file-thumb"
-                                  src={thumbSrc}
-                                  alt={file.name}
-                                  loading="lazy"
-                                  style={{ display: thumbReady[file.id] ? "block" : "none" }}
-                                  onLoad={() => setThumbReady((prev) => ({ ...prev, [file.id]: true }))}
-                                  onError={() => setThumbReady((prev) => ({ ...prev, [file.id]: false }))}
-                                />
-                                {!thumbReady[file.id] && (
-                                  <div className="file-thumb file-thumb-fallback">檔案</div>
-                                )}
-                              </>
-                            ) : (
-                              <div className="file-thumb file-thumb-fallback">檔案</div>
-                            )}
-                            <div className="file-meta">
-                              <div className="file-title">{file.name}</div>
-                              <div className="topbar-right">
-                                <a className="btn btn-ghost" href={file.url} target="_blank" rel="noreferrer">
-                                  開啟檔案
-                                </a>
-                                {!isViewer && (
-                                  <button
-                                    className="btn btn-ghost"
-                                    type="button"
-                                    onClick={() => deleteFile(selectedTask.id, file.id)}
-                                  >
-                                    刪除
-                                  </button>
-                                )}
-                              </div>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
                   </div>
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium" htmlFor="subtask-duration">
+                      工期 (天)
+                    </label>
+                    <Input
+                      id="subtask-duration"
+                      type="number"
+                      placeholder="工期 (天)"
+                      value={subtaskDuration}
+                      onChange={(e) => setSubtaskDuration(Number(e.target.value))}
+                      disabled={isViewer}
+                    />
+                  </div>
+                  <div className="space-y-2 md:col-span-2">
+                    <label className="text-sm font-medium" htmlFor="subtask-start-date">
+                      開始日期
+                    </label>
+                    <Select
+                      value={String(subtaskStartIndex)}
+                      onValueChange={(val) => setSubtaskStartIndex(Number(val))}
+                      disabled={isViewer}
+                    >
+                      <SelectTrigger id="subtask-start-date">
+                        <SelectValue placeholder="開始日期" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {dayList.map((day, index) => (
+                          <SelectItem key={`subtask-day-${index}`} value={String(index)}>
+                            開始日期 {formatDate(day)}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="md:col-span-2">
+                    <Button type="button" onClick={onCreateSubtask} disabled={isViewer} className="w-full">
+                      新增子任務
+                    </Button>
+                  </div>
+                  {subtaskMsg && <p className="text-sm text-muted-foreground md:col-span-2">{subtaskMsg}</p>}
+                </div>
+              </div>
 
-                  <div className="card" style={{ padding: 14 }}>
-                    <div className="card-header">
-                      <div className="card-title">活動紀錄</div>
-                    </div>
-                    {isLogPending && <div className="page-subtitle">讀取紀錄中...</div>}
-                    {!isLogPending && activityLogs.length === 0 && (
-                      <div className="page-subtitle">尚無更新紀錄</div>
-                    )}
-                    {activityLogs.map((log) => (
-                      <div className="task-card" key={log.id}>
-                        <div>{log.note || "進度更新"}</div>
-                        <div className="page-subtitle">
-                          {formatDateString(log.time)} ・ {log.user_name} ・ {log.progress}%
+              <div className="px-6 space-y-4">
+                <h3 className="font-semibold">文件連結</h3>
+                <FileUploadForm
+                  taskId={selectedTask.id}
+                  onUploaded={(item) => addUploadedFile(selectedTask.id, item)}
+                  disabled={isViewer}
+                />
+                <p className="text-sm text-muted-foreground">目前連結數量 {filesByTask[selectedTask.id]?.length ?? 0}</p>
+                <div className="space-y-2">
+                  {(filesByTask[selectedTask.id] ?? []).map((file) => {
+                    const thumbSrc = getThumbnailSrc(file);
+                    return (
+                      <div className="flex items-center gap-3 rounded-md border p-2" key={file.id}>
+                        {thumbSrc ? (
+                          <>
+                            <img
+                              className="w-10 h-10 rounded object-cover"
+                              src={thumbSrc}
+                              alt={file.name}
+                              loading="lazy"
+                              style={{ display: thumbReady[file.id] ? "block" : "none" }}
+                              onLoad={() => setThumbReady((prev) => ({ ...prev, [file.id]: true }))}
+                              onError={() => setThumbReady((prev) => ({ ...prev, [file.id]: false }))}
+                            />
+                            {!thumbReady[file.id] && (
+                              <div className="w-10 h-10 rounded bg-muted flex items-center justify-center text-muted-foreground text-xs">檔案</div>
+                            )}
+                          </>
+                        ) : (
+                          <div className="w-10 h-10 rounded bg-muted flex items-center justify-center text-muted-foreground text-xs">檔案</div>
+                        )}
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium truncate">{file.name}</p>
+                          <div className="flex items-center gap-2">
+                            <Button asChild variant="link" size="sm" className="p-0 h-auto">
+                              <a href={file.url} target="_blank" rel="noreferrer">
+                                開啟檔案
+                              </a>
+                            </Button>
+                            {!isViewer && (
+                              <Button
+                                variant="link"
+                                size="sm"
+                                className="p-0 h-auto text-destructive"
+                                type="button"
+                                onClick={() => deleteFile(selectedTask.id, file.id)}
+                              >
+                                刪除
+                              </Button>
+                            )}
+                          </div>
                         </div>
                       </div>
-                    ))}
-                  </div>
+                    );
+                  })}
                 </div>
-              )}
+              </div>
+
+              <div className="px-6 space-y-4">
+                <h3 className="font-semibold">活動紀錄</h3>
+                {isLogPending && <p className="text-sm text-muted-foreground">讀取紀錄中...</p>}
+                {!isLogPending && activityLogs.length === 0 && (
+                  <p className="text-sm text-muted-foreground">尚無更新紀錄</p>
+                )}
+                <div className="space-y-3">
+                {activityLogs.map((log) => (
+                  <div className="text-sm" key={log.id}>
+                    <p>{log.note || "進度更新"}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {formatDateString(log.time)} ・ {log.user_name} ・ {log.progress}%
+                    </p>
+                  </div>
+                ))}
+                </div>
+              </div>
             </div>
-          </div>
-        </div>
-      )}
+          )}
+        </DialogContent>
+      </Dialog>
+      
+      {/* This is the FileUploadForm component which also needs refactoring */}
     </div>
   );
 }
@@ -1715,32 +1823,40 @@ function FileUploadForm({
   }
 
   return (
-    <div className="admin-form-grid" style={{ padding: 0, border: "none" }}>
-      <input
-        placeholder="檔案名稱（選填）"
-        value={displayName}
-        onChange={(e) => setDisplayName(e.target.value)}
-        disabled={disabled || isUploading}
-      />
-      <input
-        type="file"
-        accept=".pdf,.doc,.docx,.xls,.xlsx,image/*"
-        onChange={(e) => setFile(e.target.files?.[0] ?? null)}
-        disabled={disabled || isUploading}
-      />
-      <button type="button" onClick={handleUpload} disabled={disabled || isUploading}>
+    <div className="space-y-4">
+      <div className="space-y-2">
+        <label htmlFor="file-display-name" className="text-sm font-medium">檔案名稱（選填）</label>
+        <Input
+          id="file-display-name"
+          placeholder="檔案名稱（選填）"
+          value={displayName}
+          onChange={(e) => setDisplayName(e.target.value)}
+          disabled={disabled || isUploading}
+        />
+      </div>
+      <div className="space-y-2">
+        <label htmlFor="file-upload" className="text-sm font-medium">選擇檔案</label>
+        <Input
+          id="file-upload"
+          type="file"
+          accept=".pdf,.doc,.docx,.xls,.xlsx,image/*"
+          onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+          disabled={disabled || isUploading}
+        />
+      </div>
+      <Button type="button" onClick={handleUpload} disabled={disabled || isUploading} className="w-full">
         {isUploading ? "上傳中..." : "上傳到 Google 雲端硬碟"}
-      </button>
-      <div className="page-subtitle">圖片超過 2MB 會壓縮，其他檔案上限 10MB。</div>
+      </Button>
+      <p className="text-xs text-muted-foreground">圖片超過 2MB 會壓縮，其他檔案上限 10MB。</p>
       {driveFolderUrl && (
-        <div className="page-subtitle">
+        <p className="text-sm text-muted-foreground">
           上傳到：
-          <a href={driveFolderUrl} target="_blank" rel="noreferrer">
+          <a href={driveFolderUrl} target="_blank" rel="noreferrer" className="underline">
             {driveFolderName}
           </a>
-        </div>
+        </p>
       )}
-      {message && <div className="page-subtitle">{message}</div>}
+      {message && <p className="text-sm text-muted-foreground">{message}</p>}
     </div>
   );
 }

@@ -32,7 +32,10 @@ export async function createAssistRequest(formData: FormData) {
   const projectId = String(formData.get("project_id") ?? "").trim();
   if (!projectId) return;
   const taskId = String(formData.get("project_task_id") ?? "").trim();
-  const toUnitId = String(formData.get("to_unit_id") ?? "").trim();
+  let toUnitId = String(formData.get("to_unit_id") ?? "").trim();
+  if (toUnitId === "all") {
+    toUnitId = "";
+  }
   const dueDateRaw = parseDate(String(formData.get("due_date") ?? "").trim());
   const note = String(formData.get("note") ?? "").trim();
 

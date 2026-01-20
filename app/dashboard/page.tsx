@@ -173,9 +173,10 @@ export default async function DashboardPage({
 
   const projectList = (projects ?? []) as ProjectRow[];
   const allProjectIds = projectList.map((project) => project.id);
-  const filteredProjects = unitIdFilter
-    ? projectList.filter((project) => project.unit_id === unitIdFilter)
-    : projectList;
+  const filteredProjects =
+    unitIdFilter && unitIdFilter !== "all"
+      ? projectList.filter((project) => project.unit_id === unitIdFilter)
+      : projectList;
   const selectedProjectId = projectIdFilter || filteredProjects[0]?.id || "";
 
   const { data: tasks } = allProjectIds.length

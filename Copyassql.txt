@@ -1,0 +1,363 @@
+-- WARNING: This schema is for context only and is not meant to be run.
+-- Table order and constraints may not be valid for execution.
+
+CREATE TABLE public.activity_logs (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  event_type text NOT NULL CHECK (event_type = ANY (ARRAY['action'::text, 'error'::text, 'warn'::text, 'info'::text])),
+  action text,
+  resource text,
+  record_id uuid,
+  org_id uuid,
+  unit_id uuid,
+  user_id uuid,
+  user_email text,
+  source text,
+  message text,
+  meta jsonb,
+  CONSTRAINT activity_logs_pkey PRIMARY KEY (id)
+);
+CREATE TABLE public.assist_requests (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  org_id uuid NOT NULL,
+  unit_id uuid NOT NULL,
+  project_id uuid NOT NULL,
+  project_task_id uuid,
+  to_unit_id uuid,
+  requested_by uuid,
+  status text NOT NULL DEFAULT 'open'::text,
+  due_date date,
+  note text,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT assist_requests_pkey PRIMARY KEY (id),
+  CONSTRAINT assist_requests_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.orgs(id),
+  CONSTRAINT assist_requests_unit_id_fkey FOREIGN KEY (unit_id) REFERENCES public.units(id),
+  CONSTRAINT assist_requests_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id),
+  CONSTRAINT assist_requests_project_task_id_fkey FOREIGN KEY (project_task_id) REFERENCES public.project_tasks(id),
+  CONSTRAINT assist_requests_to_unit_id_fkey FOREIGN KEY (to_unit_id) REFERENCES public.units(id),
+  CONSTRAINT assist_requests_requested_by_fkey FOREIGN KEY (requested_by) REFERENCES public.profiles(user_id)
+);
+CREATE TABLE public.cost_attachments (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  cost_request_id uuid,
+  cost_item_id uuid,
+  org_id uuid NOT NULL,
+  unit_id uuid NOT NULL,
+  uploaded_by uuid NOT NULL,
+  kind text NOT NULL,
+  file_name text NOT NULL,
+  mime_type text,
+  storage_provider text NOT NULL DEFAULT 'gdrive'::text,
+  external_file_id text,
+  web_view_link text,
+  invoice_no text,
+  issued_on date,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT cost_attachments_pkey PRIMARY KEY (id),
+  CONSTRAINT cost_attachments_cost_request_id_fkey FOREIGN KEY (cost_request_id) REFERENCES public.cost_requests(id),
+  CONSTRAINT cost_attachments_cost_item_id_fkey FOREIGN KEY (cost_item_id) REFERENCES public.cost_items(id),
+  CONSTRAINT cost_attachments_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.orgs(id),
+  CONSTRAINT cost_attachments_unit_id_fkey FOREIGN KEY (unit_id) REFERENCES public.units(id),
+  CONSTRAINT cost_attachments_uploaded_by_fkey FOREIGN KEY (uploaded_by) REFERENCES public.profiles(user_id)
+);
+CREATE TABLE public.cost_items (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  cost_request_id uuid NOT NULL,
+  org_id uuid NOT NULL,
+  unit_id uuid NOT NULL,
+  project_id uuid NOT NULL,
+  project_task_id uuid,
+  expense_type_id uuid NOT NULL,
+  description text NOT NULL,
+  qty numeric NOT NULL DEFAULT 1,
+  uom text,
+  unit_price numeric NOT NULL DEFAULT 0,
+  amount numeric NOT NULL DEFAULT 0,
+  tax_rate numeric,
+  tax_amount numeric,
+  is_tax_included boolean DEFAULT true,
+  incurred_on date,
+  used_by uuid,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT cost_items_pkey PRIMARY KEY (id),
+  CONSTRAINT cost_items_cost_request_id_fkey FOREIGN KEY (cost_request_id) REFERENCES public.cost_requests(id),
+  CONSTRAINT cost_items_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.orgs(id),
+  CONSTRAINT cost_items_unit_id_fkey FOREIGN KEY (unit_id) REFERENCES public.units(id),
+  CONSTRAINT cost_items_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id),
+  CONSTRAINT cost_items_project_task_id_fkey FOREIGN KEY (project_task_id) REFERENCES public.project_tasks(id),
+  CONSTRAINT cost_items_expense_type_id_fkey FOREIGN KEY (expense_type_id) REFERENCES public.cost_types(id),
+  CONSTRAINT cost_items_used_by_fkey FOREIGN KEY (used_by) REFERENCES public.profiles(user_id)
+);
+CREATE TABLE public.cost_requests (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  org_id uuid NOT NULL,
+  unit_id uuid NOT NULL,
+  project_id uuid NOT NULL,
+  doc_no text NOT NULL,
+  request_date date NOT NULL,
+  requested_by uuid NOT NULL,
+  payee_type text NOT NULL,
+  payee_name text NOT NULL,
+  currency text NOT NULL,
+  total_amount numeric NOT NULL DEFAULT 0,
+  status text NOT NULL DEFAULT 'draft'::text CHECK (status = ANY (ARRAY['draft'::text, 'submitted'::text, 'approved'::text, 'rejected'::text, 'paid'::text, 'canceled'::text])),
+  submitted_at timestamp with time zone,
+  approved_at timestamp with time zone,
+  approved_by uuid,
+  rejected_at timestamp with time zone,
+  rejected_reason text,
+  payment_date date,
+  payment_method text,
+  note text,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT cost_requests_pkey PRIMARY KEY (id),
+  CONSTRAINT cost_requests_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.orgs(id),
+  CONSTRAINT cost_requests_unit_id_fkey FOREIGN KEY (unit_id) REFERENCES public.units(id),
+  CONSTRAINT cost_requests_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id),
+  CONSTRAINT cost_requests_requested_by_fkey FOREIGN KEY (requested_by) REFERENCES public.profiles(user_id),
+  CONSTRAINT cost_requests_approved_by_fkey FOREIGN KEY (approved_by) REFERENCES public.profiles(user_id)
+);
+CREATE TABLE public.cost_types (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  org_id uuid NOT NULL,
+  name text NOT NULL,
+  active boolean NOT NULL DEFAULT true,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT cost_types_pkey PRIMARY KEY (id),
+  CONSTRAINT cost_types_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.orgs(id)
+);
+CREATE TABLE public.device_allowlist (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  user_id uuid NOT NULL,
+  user_email text,
+  org_id uuid,
+  unit_id uuid,
+  device_id text NOT NULL,
+  device_name text,
+  user_agent text,
+  last_seen_at timestamp with time zone NOT NULL DEFAULT now(),
+  approved boolean NOT NULL DEFAULT false,
+  approved_at timestamp with time zone,
+  approved_by uuid,
+  CONSTRAINT device_allowlist_pkey PRIMARY KEY (id),
+  CONSTRAINT device_allowlist_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id),
+  CONSTRAINT device_allowlist_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.orgs(id),
+  CONSTRAINT device_allowlist_unit_id_fkey FOREIGN KEY (unit_id) REFERENCES public.units(id),
+  CONSTRAINT device_allowlist_approved_by_fkey FOREIGN KEY (approved_by) REFERENCES auth.users(id)
+);
+CREATE TABLE public.drive_items (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  project_task_id uuid NOT NULL,
+  org_id uuid NOT NULL,
+  unit_id uuid NOT NULL,
+  uploaded_by uuid NOT NULL,
+  drive_file_id text NOT NULL,
+  web_view_link text,
+  name text NOT NULL,
+  mime_type text,
+  modified_time timestamp with time zone,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  thumbnail_link text,
+  file_size_bytes bigint,
+  original_size_bytes bigint,
+  CONSTRAINT drive_items_pkey PRIMARY KEY (id),
+  CONSTRAINT drive_items_project_task_id_fkey FOREIGN KEY (project_task_id) REFERENCES public.project_tasks(id),
+  CONSTRAINT drive_items_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.orgs(id),
+  CONSTRAINT drive_items_unit_id_fkey FOREIGN KEY (unit_id) REFERENCES public.units(id),
+  CONSTRAINT drive_items_uploaded_by_fkey FOREIGN KEY (uploaded_by) REFERENCES public.profiles(user_id)
+);
+CREATE TABLE public.drive_items_quarantine (
+  id uuid,
+  project_task_id uuid,
+  org_id uuid,
+  unit_id uuid,
+  uploaded_by uuid,
+  drive_file_id text,
+  web_view_link text,
+  name text,
+  mime_type text,
+  modified_time timestamp with time zone,
+  created_at timestamp with time zone,
+  thumbnail_link text,
+  file_size_bytes bigint,
+  original_size_bytes bigint,
+  quarantine_reason text NOT NULL,
+  quarantined_at timestamp with time zone NOT NULL DEFAULT now()
+);
+CREATE TABLE public.job_titles (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  org_id uuid NOT NULL,
+  name text NOT NULL,
+  is_active boolean NOT NULL DEFAULT true,
+  created_by uuid,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT job_titles_pkey PRIMARY KEY (id),
+  CONSTRAINT job_titles_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.orgs(id),
+  CONSTRAINT job_titles_created_by_fkey FOREIGN KEY (created_by) REFERENCES public.profiles(user_id)
+);
+CREATE TABLE public.memberships (
+  org_id uuid NOT NULL,
+  unit_id uuid NOT NULL,
+  user_id uuid NOT NULL,
+  role USER-DEFINED NOT NULL DEFAULT 'member'::role_type,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT memberships_pkey PRIMARY KEY (org_id, unit_id, user_id),
+  CONSTRAINT memberships_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.orgs(id),
+  CONSTRAINT memberships_unit_id_fkey FOREIGN KEY (unit_id) REFERENCES public.units(id),
+  CONSTRAINT memberships_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.profiles(user_id)
+);
+CREATE TABLE public.orgs (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  name text NOT NULL,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  status text NOT NULL DEFAULT 'active'::text CHECK (status = ANY (ARRAY['active'::text, 'suspended'::text])),
+  CONSTRAINT orgs_pkey PRIMARY KEY (id)
+);
+CREATE TABLE public.platform_admins (
+  user_id uuid NOT NULL,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT platform_admins_pkey PRIMARY KEY (user_id),
+  CONSTRAINT platform_admins_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id)
+);
+CREATE TABLE public.profiles (
+  user_id uuid NOT NULL,
+  display_name text,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  job_title_id uuid,
+  CONSTRAINT profiles_pkey PRIMARY KEY (user_id),
+  CONSTRAINT profiles_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id),
+  CONSTRAINT profiles_job_title_id_fkey FOREIGN KEY (job_title_id) REFERENCES public.job_titles(id)
+);
+CREATE TABLE public.progress_logs (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  project_task_id uuid NOT NULL,
+  org_id uuid NOT NULL,
+  unit_id uuid NOT NULL,
+  user_id uuid NOT NULL,
+  progress integer NOT NULL CHECK (progress >= 0 AND progress <= 100),
+  note text,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT progress_logs_pkey PRIMARY KEY (id),
+  CONSTRAINT progress_logs_project_task_id_fkey FOREIGN KEY (project_task_id) REFERENCES public.project_tasks(id),
+  CONSTRAINT progress_logs_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.orgs(id),
+  CONSTRAINT progress_logs_unit_id_fkey FOREIGN KEY (unit_id) REFERENCES public.units(id),
+  CONSTRAINT progress_logs_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.profiles(user_id)
+);
+CREATE TABLE public.project_grants (
+  org_id uuid NOT NULL,
+  project_id uuid NOT NULL,
+  unit_id uuid,
+  user_id uuid,
+  permission_key text NOT NULL,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  created_by uuid,
+  CONSTRAINT project_grants_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id),
+  CONSTRAINT project_grants_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.orgs(id),
+  CONSTRAINT project_grants_unit_id_fkey FOREIGN KEY (unit_id) REFERENCES public.units(id),
+  CONSTRAINT project_grants_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.profiles(user_id),
+  CONSTRAINT project_grants_created_by_fkey FOREIGN KEY (created_by) REFERENCES public.profiles(user_id)
+);
+CREATE TABLE public.project_task_assignees (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  task_id uuid NOT NULL,
+  org_id uuid NOT NULL,
+  unit_id uuid NOT NULL,
+  user_id uuid NOT NULL,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT project_task_assignees_pkey PRIMARY KEY (id),
+  CONSTRAINT project_task_assignees_task_id_fkey FOREIGN KEY (task_id) REFERENCES public.project_tasks(id),
+  CONSTRAINT project_task_assignees_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.orgs(id),
+  CONSTRAINT project_task_assignees_unit_id_fkey FOREIGN KEY (unit_id) REFERENCES public.units(id),
+  CONSTRAINT project_task_assignees_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.profiles(user_id)
+);
+CREATE TABLE public.project_tasks (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  project_id uuid NOT NULL,
+  phase_name text NOT NULL,
+  seq integer NOT NULL,
+  code text,
+  name text NOT NULL,
+  start_offset_days integer NOT NULL DEFAULT 0,
+  duration_days integer NOT NULL DEFAULT 1,
+  owner_unit_id uuid,
+  progress integer NOT NULL DEFAULT 0 CHECK (progress >= 0 AND progress <= 100),
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  org_id uuid NOT NULL,
+  unit_id uuid NOT NULL,
+  owner_user_id uuid,
+  CONSTRAINT project_tasks_pkey PRIMARY KEY (id),
+  CONSTRAINT project_tasks_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id),
+  CONSTRAINT project_tasks_owner_unit_id_fkey FOREIGN KEY (owner_unit_id) REFERENCES public.units(id),
+  CONSTRAINT project_tasks_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.orgs(id),
+  CONSTRAINT project_tasks_unit_id_fkey FOREIGN KEY (unit_id) REFERENCES public.units(id),
+  CONSTRAINT project_tasks_owner_user_id_fkey FOREIGN KEY (owner_user_id) REFERENCES public.profiles(user_id)
+);
+CREATE TABLE public.projects (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  org_id uuid NOT NULL,
+  template_id uuid,
+  name text NOT NULL,
+  start_date date NOT NULL DEFAULT CURRENT_DATE,
+  status text NOT NULL DEFAULT 'active'::text,
+  created_by uuid,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  unit_id uuid NOT NULL,
+  CONSTRAINT projects_pkey PRIMARY KEY (id),
+  CONSTRAINT projects_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.orgs(id),
+  CONSTRAINT projects_template_id_fkey FOREIGN KEY (template_id) REFERENCES public.templates(id),
+  CONSTRAINT projects_created_by_fkey FOREIGN KEY (created_by) REFERENCES public.profiles(user_id),
+  CONSTRAINT projects_unit_id_fkey FOREIGN KEY (unit_id) REFERENCES public.units(id)
+);
+CREATE TABLE public.role_permissions (
+  role USER-DEFINED NOT NULL,
+  resource text NOT NULL,
+  can_read boolean NOT NULL DEFAULT false,
+  can_create boolean NOT NULL DEFAULT false,
+  can_update boolean NOT NULL DEFAULT false,
+  can_delete boolean NOT NULL DEFAULT false,
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT role_permissions_pkey PRIMARY KEY (role, resource)
+);
+CREATE TABLE public.template_phases (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  template_id uuid NOT NULL,
+  seq integer NOT NULL,
+  name text NOT NULL,
+  color text,
+  CONSTRAINT template_phases_pkey PRIMARY KEY (id),
+  CONSTRAINT template_phases_template_id_fkey FOREIGN KEY (template_id) REFERENCES public.templates(id)
+);
+CREATE TABLE public.template_tasks (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  phase_id uuid NOT NULL,
+  seq integer NOT NULL,
+  code text,
+  name text NOT NULL,
+  default_duration_days integer NOT NULL DEFAULT 1,
+  default_owner_unit_id uuid,
+  CONSTRAINT template_tasks_pkey PRIMARY KEY (id),
+  CONSTRAINT template_tasks_phase_id_fkey FOREIGN KEY (phase_id) REFERENCES public.template_phases(id),
+  CONSTRAINT template_tasks_default_owner_unit_id_fkey FOREIGN KEY (default_owner_unit_id) REFERENCES public.units(id)
+);
+CREATE TABLE public.templates (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  org_id uuid NOT NULL,
+  name text NOT NULL,
+  created_by uuid,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT templates_pkey PRIMARY KEY (id),
+  CONSTRAINT templates_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.orgs(id),
+  CONSTRAINT templates_created_by_fkey FOREIGN KEY (created_by) REFERENCES public.profiles(user_id)
+);
+CREATE TABLE public.units (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  org_id uuid NOT NULL,
+  name text NOT NULL,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT units_pkey PRIMARY KEY (id),
+  CONSTRAINT units_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.orgs(id)
+);

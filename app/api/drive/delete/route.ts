@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { randomUUID } from "crypto";
 import { google } from "googleapis";
 import { createServerSupabase } from "@/lib/supabase/server";
 import { createAdminSupabase } from "@/lib/supabase/admin";
@@ -8,6 +9,19 @@ import { ensureTaskAccess } from "@/lib/guards/ensureTaskAccess";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+function errorResponse(code: string, message: string, status: number) {
+  return NextResponse.json({ code, message }, { status });
+}
+
+function isInvalidGrantError(err: unknown) {
+  const message = err instanceof Error ? err.message : "";
+  const anyErr = err as { response?: { status?: number; data?: any } };
+  const status = anyErr?.response?.status;
+  const data = anyErr?.response?.data;
+  const errorValue = typeof data?.error === "string" ? data.error : "";
+  return status === 400 && (errorValue === "invalid_grant" || message.includes("invalid_grant"));
+}
 
 function getOAuthClient() {
   const clientId = process.env.GOOGLE_CLIENT_ID;
@@ -28,21 +42,21 @@ export async function POST(request: Request) {
   const itemId = String(payload?.item_id ?? "").trim();
 
   if (!itemId) {
-    return NextResponse.json({ ok: false, error: "missing_item_id" }, { status: 400 });
+    return errorResponse("missing_item_id", "missing_item_id", 400);
   }
 
   const supabase = await createServerSupabase();
   const { data: authData, error: authErr } = await supabase.auth.getUser();
   const { data: sessionData } = await supabase.auth.getSession();
   if (authErr || !authData.user) {
-    return NextResponse.json({ ok: false, error: "not_authenticated" }, { status: 401 });
+    return errorResponse("not_authenticated", "not_authenticated", 401);
   }
 
   let admin;
   try {
     admin = createAdminSupabase();
   } catch {
-    return NextResponse.json({ ok: false, error: "missing_service_role_key" }, { status: 500 });
+    return errorResponse("missing_service_role_key", "missing_service_role_key", 500);
   }
 
   const { data: item, error: itemErr } = await admin
@@ -52,7 +66,7 @@ export async function POST(request: Request) {
     .maybeSingle();
 
   if (itemErr || !item) {
-    return NextResponse.json({ ok: false, error: "item_not_found" }, { status: 404 });
+    return errorResponse("item_not_found", "item_not_found", 404);
   }
 
   const isPlatformAdmin = isPlatformAdminFromAccessToken(sessionData.session?.access_token);
@@ -64,12 +78,12 @@ export async function POST(request: Request) {
     driveItemUnitId: item.unit_id,
   });
   if (!taskAccess.ok) {
-    return NextResponse.json({ ok: false, error: taskAccess.error }, { status: taskAccess.status });
+    return errorResponse(taskAccess.error, taskAccess.error, taskAccess.status);
   }
 
   const oauth = getOAuthClient();
   if (!oauth) {
-    return NextResponse.json({ ok: false, error: "missing_google_oauth" }, { status: 500 });
+    return errorResponse("missing_google_oauth", "missing_google_oauth", 500);
   }
 
   const drive = google.drive({ version: "v3", auth: oauth });
@@ -77,14 +91,20 @@ export async function POST(request: Request) {
     try {
       await drive.files.delete({ fileId: item.drive_file_id });
     } catch (err: unknown) {
+      if (isInvalidGrantError(err)) {
+        return NextResponse.json(
+          { code: "NEED_REAUTH", provider: "google", traceId: randomUUID() },
+          { status: 401 }
+        );
+      }
       const message = err instanceof Error ? err.message : "drive_delete_failed";
-      return NextResponse.json({ ok: false, error: message }, { status: 502 });
+      return errorResponse("drive_delete_failed", message, 502);
     }
   }
 
   const { error: deleteErr } = await admin.from("drive_items").delete().eq("id", itemId);
   if (deleteErr) {
-    return NextResponse.json({ ok: false, error: deleteErr.message }, { status: 500 });
+    return errorResponse("db_delete_failed", deleteErr.message, 500);
   }
 
   return NextResponse.json({ ok: true });

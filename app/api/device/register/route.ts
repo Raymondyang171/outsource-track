@@ -41,13 +41,17 @@ export async function POST(request: Request) {
     .limit(1)
     .maybeSingle();
 
+  if (!memRow?.org_id || !memRow?.unit_id) {
+    return NextResponse.json({ ok: false, error: "org_not_resolved" }, { status: 400 });
+  }
+
   const userAgent = request.headers.get("user-agent");
 
   const upsertPayload = {
     user_id: user.id,
     user_email: user.email ?? null,
-    org_id: memRow?.org_id ?? null,
-    unit_id: memRow?.unit_id ?? null,
+    org_id: memRow.org_id,
+    unit_id: memRow.unit_id,
     device_id: deviceId,
     device_name: deviceName || null,
     user_agent: userAgent,
@@ -55,7 +59,7 @@ export async function POST(request: Request) {
   };
 
   const { data: upserted, error: upsertErr } = await admin
-    .from("device_allowlist")
+    .from("devices")
     .upsert(upsertPayload, { onConflict: "user_id,device_id" })
     .select("approved")
     .maybeSingle();

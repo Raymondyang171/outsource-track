@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { safeFetch } from "@/lib/api-client";
 
 function buildDeviceLabel() {
   const ua = navigator.userAgent;
@@ -28,7 +29,7 @@ export default function DeviceRegisterClient() {
     setStatus("loading");
     setMessage("");
     try {
-      const response = await fetch("/api/device/register", {
+      const response = await safeFetch("/api/device/register", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

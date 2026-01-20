@@ -151,9 +151,19 @@ export default async function SettingsPage({
 
   const { data: profile } = await supabase
     .from("profiles")
-    .select("display_name")
+    .select("display_name, job_title_id")
     .eq("user_id", user.id)
     .maybeSingle();
+
+  let jobTitleName: string | null = null;
+  if (profile?.job_title_id) {
+    const { data: jobTitle } = await supabase
+      .from("job_titles")
+      .select("name")
+      .eq("id", profile.job_title_id)
+      .maybeSingle();
+    jobTitleName = jobTitle?.name ?? null;
+  }
 
   const { data: memberships } = await supabase
     .from("memberships")
@@ -313,6 +323,10 @@ export default async function SettingsPage({
                 </div>
               ))}
             </div>
+          </div>
+          <div className="admin-field">
+            <label>職稱</label>
+            <div className="admin-inline-meta">{jobTitleName ?? "未設定職稱"}</div>
           </div>
           <div className="admin-field">
             <label htmlFor="display_name">顯示名稱</label>

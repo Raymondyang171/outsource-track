@@ -17,6 +17,7 @@ export async function updateSession(request: NextRequest) {
   const pathname = request.nextUrl.pathname;
   const publicPaths = ["/login", "/device/register", "/reset-password", "/api/device/register"];
   const deviceAdminBypass = ["/admin/devices"];
+  const deviceApiAllowlist = ["/api/permissions", "/api/device/register"];
   const isApiRequest = pathname.startsWith("/api");
   const isPublic = publicPaths.some(
     (path) => pathname === path || pathname.startsWith(`${path}/`)
@@ -50,6 +51,12 @@ export async function updateSession(request: NextRequest) {
     return response;
   }
   if (isBypass) {
+    return response;
+  }
+  if (
+    isApiRequest &&
+    deviceApiAllowlist.some((path) => pathname === path || pathname.startsWith(`${path}/`))
+  ) {
     return response;
   }
 

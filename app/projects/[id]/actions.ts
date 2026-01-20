@@ -233,6 +233,7 @@ export async function updateTaskAssignees(opts: {
   task_id: string;
   owner_unit_id?: string | null;
   owner_user_id?: string | null;
+  assignee_user_ids?: string[] | null;
 }) {
   const supabase = await createServerSupabase();
   const { data: sessionData } = await supabase.auth.getSession();
@@ -264,6 +265,10 @@ export async function updateTaskAssignees(opts: {
     return { ok: false as const, error: terr?.message ?? "task_not_found" };
   }
 
+  if (!task.org_id || !task.unit_id) {
+    return { ok: false as const, error: "task_missing_org_unit" };
+  }
+
   if (!isPlatformAdmin) {
     if (adminClient) {
       const allowed = await checkPermission(adminClient, user_id, task.org_id, "tasks", "update");
@@ -292,6 +297,19 @@ export async function updateTaskAssignees(opts: {
 
   const owner_unit_id = opts.owner_unit_id ?? null;
   const owner_user_id = opts.owner_user_id ?? null;
+  const rawAssignees = Array.isArray(opts.assignee_user_ids)
+    ? opts.assignee_user_ids
+    : owner_user_id
+      ? [owner_user_id]
+      : [];
+  const assigneeUserIds = Array.from(
+    new Set(
+      rawAssignees
+        .filter((value): value is string => typeof value === "string")
+        .map((value) => value.trim())
+        .filter(Boolean)
+    )
+  );
 
   const { error: uperr } = await dataClient
     .from("project_tasks")
@@ -300,6 +318,28 @@ export async function updateTaskAssignees(opts: {
 
   if (uperr) {
     return { ok: false as const, error: uperr.message };
+  }
+
+  const { error: clearErr } = await dataClient
+    .from("project_task_assignees")
+    .delete()
+    .eq("task_id", task.id);
+
+  if (clearErr) {
+    return { ok: false as const, error: clearErr.message };
+  }
+
+  if (assigneeUserIds.length > 0) {
+    const rows = assigneeUserIds.map((assigneeId) => ({
+      task_id: task.id,
+      org_id: task.org_id,
+      unit_id: task.unit_id,
+      user_id: assigneeId,
+    }));
+    const { error: insertErr } = await dataClient.from("project_task_assignees").insert(rows);
+    if (insertErr) {
+      return { ok: false as const, error: insertErr.message };
+    }
   }
 
   return { ok: true as const };

@@ -196,7 +196,7 @@ body {
 .app-sidebar {
   background: var(--panel-bg);
   border-right: 1px solid var(--border);
-  padding: 22px 16px 24px;
+  padding: 1.5rem 1rem;
   display: flex;
   flex-direction: column;
   position: sticky;
@@ -207,7 +207,7 @@ body {
 .sidebar-content {
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: 1.25rem;
 }
 
 .sidebar-mini {
@@ -380,8 +380,8 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 16px;
-  padding: 18px 24px;
+  gap: 1rem;
+  padding: 1rem 1.5rem;
   background: color-mix(in srgb, var(--panel-bg) 88%, transparent);
   border-bottom: 1px solid var(--border);
   backdrop-filter: blur(16px);
@@ -404,7 +404,7 @@ body {
 
 .app-main {
   flex: 1;
-  padding: 28px 24px 56px;
+  padding: 2rem 1.5rem;
 }
 
 .page {
@@ -435,11 +435,11 @@ body {
 }
 
 .card {
-  background: var(--panel-bg);
-  border-radius: 18px;
+  background: var(--card);
+  border-radius: var(--radius-xl);
   border: 1px solid var(--border);
   box-shadow: var(--shadow-1);
-  padding: 18px;
+  padding: 20px;
 }
 
 .card-header {
@@ -465,49 +465,58 @@ body {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 8px;
-  padding: 8px 14px;
-  border-radius: 12px;
+  gap: 0.5rem;
+  white-space: nowrap;
+  border-radius: var(--radius-md);
+  font-size: 0.875rem;
+  font-weight: 500;
+  transition: all 150ms;
+  height: 2.25rem;
+  padding: 0.5rem 1rem;
   border: 1px solid transparent;
-  font-weight: 600;
-  transition: transform 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
 }
 
 .btn-primary {
-  background: var(--brand);
-  color: white;
+  background: var(--primary);
+  color: var(--primary-foreground);
   box-shadow: var(--shadow-1);
 }
 
 .btn-primary:hover {
-  background: var(--brand-strong);
+  filter: brightness(90%);
 }
 
 .btn-ghost {
   background: transparent;
   border-color: var(--border);
-  color: var(--ink);
+  color: var(--foreground);
 }
 
 .btn-ghost:hover {
-  background: var(--panel-soft);
+  background: var(--accent);
+  color: var(--accent-foreground);
 }
 
 .btn-soft {
-  background: var(--brand-soft);
-  color: var(--brand-strong);
+  background: var(--secondary);
+  color: var(--secondary-foreground);
   border-color: transparent;
+}
+
+.btn-soft:hover {
+  filter: brightness(95%);
 }
 
 .input,
 .select,
 .textarea {
   width: 100%;
-  border-radius: 12px;
-  border: 1px solid var(--border);
-  padding: 10px 12px;
-  background: var(--panel-bg);
-  color: var(--ink);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--input);
+  padding: 0.25rem 0.75rem;
+  height: 2.25rem;
+  background: transparent;
+  color: var(--foreground);
 }
 
 .range {

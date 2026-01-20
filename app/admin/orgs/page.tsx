@@ -2,7 +2,7 @@ import { redirect } from "next/navigation";
 import { createServerSupabase } from "@/lib/supabase/server";
 import { createAdminSupabase } from "@/lib/supabase/admin";
 import ConfirmForm from "@/components/confirm-form";
-import { checkPermission, getPermissionsForResource } from "@/lib/permissions";
+import { checkPermission } from "@/lib/permissions";
 import { isPlatformAdminFromAccessToken } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
@@ -180,21 +180,6 @@ export default async function AdminOrgsPage({ searchParams }: PageProps) {
   const { data: orgs, error } = await admin
     .from("orgs")
     .select("id, name, status, created_at");
-  const companyPerms = await getPermissionsForResource(admin, user.id, orgId, "companies");
-  const canRead = isPlatformAdmin ? true : companyPerms.permissions?.read ?? false;
-  const canCreate = isPlatformAdmin ? true : companyPerms.permissions?.create ?? false;
-  const canUpdate = isPlatformAdmin ? true : companyPerms.permissions?.update ?? false;
-  const canDelete = isPlatformAdmin ? true : companyPerms.permissions?.delete ?? false;
-
-  if (!canRead) {
-    return (
-      <div className="admin-page">
-        <h1>公司設定</h1>
-        <p className="admin-error">目前權限不足，無法檢視。</p>
-      </div>
-    );
-  }
-
   return (
     <div className="admin-page">
       <h1>公司設定</h1>
@@ -203,7 +188,7 @@ export default async function AdminOrgsPage({ searchParams }: PageProps) {
       {errorMsg && <p className="admin-error">{decodeURIComponent(errorMsg)}</p>}
       {error && <p className="admin-error">{error.message}</p>}
       {!error && (!orgs || orgs.length === 0) && <p>目前沒有公司。</p>}
-      {!error && canCreate && (
+      {!error && (
         <form className="admin-form" action={createOrgAction}>
           <input name="name" placeholder="公司名稱" />
           <select name="status" defaultValue="active">
@@ -237,15 +222,11 @@ export default async function AdminOrgsPage({ searchParams }: PageProps) {
                         <option value="active">啟用</option>
                         <option value="suspended">停用</option>
                       </select>
-                      <button type="submit" disabled={!canUpdate}>
-                        更新
-                      </button>
+                      <button type="submit">更新</button>
                     </form>
-                    <ConfirmForm action={deleteOrgAction} confirmMessage="確定要刪除此公司？" hidden={!canDelete}>
+                    <ConfirmForm action={deleteOrgAction} confirmMessage="確定要刪除此公司？">
                       <input type="hidden" name="org_id" value={org.id} />
-                      <button type="submit" className="btn btn-ghost" disabled={!canDelete}>
-                        刪除
-                      </button>
+                      <button type="submit" className="btn btn-ghost">刪除</button>
                     </ConfirmForm>
                   </div>
                 </td>

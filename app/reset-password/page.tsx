@@ -2,10 +2,10 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { createBrowserClientClient } from "@/lib/supabase/browser";
+import { supabaseBrowserClient } from "@/lib/supabase/browser";
 
 export default function ResetPasswordPage() {
-  const supabase = createBrowserClientClient();
+  const supabase = supabaseBrowserClient;
   const router = useRouter();
   const [ready, setReady] = useState(false);
   const [password, setPassword] = useState("");

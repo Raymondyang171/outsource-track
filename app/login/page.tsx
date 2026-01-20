@@ -1,16 +1,17 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { createBrowserClientClient } from "@/lib/supabase/browser";
+import { supabaseBrowserClient } from "@/lib/supabase/browser";
 import { safeFetch } from "@/lib/api-client";
 
 export default function LoginPage() {
-  const supabase = createBrowserClientClient();
+  const supabase = supabaseBrowserClient;
   const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [msg, setMsg] = useState<string | null>(null);
+  const handledSignInRef = useRef(false);
 
   const formatAuthError = (rawMessage: string) => {
     const msgLower = rawMessage.toLowerCase();
@@ -35,16 +36,21 @@ export default function LoginPage() {
       const { data } = await supabase.auth.getUser();
       if (!mounted) return;
       if (data.user) {
+        handledSignInRef.current = true;
         router.replace("/dashboard");
       }
     };
     void checkSession();
     const { data: subscription } = supabase.auth.onAuthStateChange(
-      (event, session) => {
+      async (event, session) => {
         if (event === "SIGNED_IN" && session?.user) {
+          if (handledSignInRef.current) return;
+          handledSignInRef.current = true;
           if (typeof window !== "undefined") {
             window.sessionStorage.removeItem("auth-pending");
           }
+          await supabase.auth.getSession();
+          router.refresh();
           router.replace("/dashboard");
         }
       }
@@ -95,6 +101,9 @@ export default function LoginPage() {
       window.sessionStorage.setItem("auth-pending", Date.now().toString());
     }
     if (sessionData.session?.user) {
+      if (handledSignInRef.current) return;
+      handledSignInRef.current = true;
+      router.refresh();
       router.replace("/dashboard");
     }
   }

@@ -41,6 +41,9 @@ const defaultRolePermissions: Record<string, Record<ResourceId, PermissionSet>> 
     role,
     Object.fromEntries(
       resources.map((resource) => {
+        if (resource === "companies") {
+          return [resource, { read: false, create: false, update: false, delete: false }];
+        }
         if (role === "viewer") {
           return [resource, { read: true, create: false, update: false, delete: false }];
         }

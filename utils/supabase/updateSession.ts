@@ -79,14 +79,45 @@ export async function updateSession(request: NextRequest) {
     return NextResponse.redirect(redirectUrl);
   }
 
-  const { data: device } = await supabase
-    .from("device_allowlist")
+  let isDeviceApproved = false;
+
+  // 1. Check for specific user-device pair first
+  const { data: userDevice } = await supabase
+    .from("devices") // FIX: Query "devices" table
     .select("approved")
     .eq("user_id", user.id)
     .eq("device_id", deviceId)
     .maybeSingle();
 
-  if (!device?.approved) {
+  if (userDevice?.approved) {
+    isDeviceApproved = true;
+  } else {
+    // 2. Fallback: check if the device is approved for anyone in the user's org
+    const { data: memRow } = await supabase
+      .from("memberships")
+      .select("org_id")
+      .eq("user_id", user.id)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (memRow?.org_id) {
+      const { data: orgApprovedDevice } = await supabase
+        .from("devices")
+        .select("id")
+        .eq("org_id", memRow.org_id)
+        .eq("device_id", deviceId)
+        .eq("approved", true)
+        .limit(1)
+        .maybeSingle();
+
+      if (orgApprovedDevice) {
+        isDeviceApproved = true;
+      }
+    }
+  }
+
+  if (!isDeviceApproved) {
     console.warn("device_allowlist_blocked", {
       reason: "device_not_approved",
       path: pathname,

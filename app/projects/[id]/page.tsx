@@ -147,11 +147,34 @@ export default async function ProjectDetailPage({
 
     const { data: memberRows } = await dataClient
       .from("memberships")
-      .select("user_id, unit_id, role, profiles(display_name, job_title_id)")
+      .select("user_id, unit_id, role")
       .eq("org_id", project.org_id);
-    const memberSource = (memberRows ?? []) as MembershipProfileRow[];
+    const memberSource = (memberRows ?? []) as Array<{
+      user_id: string;
+      unit_id: string;
+      role: string | null;
+    }>;
+    const userIds = Array.from(new Set(memberSource.map((row) => row.user_id).filter(Boolean)));
+    let profileById: Record<string, { display_name: string | null; job_title_id: string | null }> = {};
+    if (userIds.length > 0) {
+      let profileClient: SupabaseClient = dataClient;
+      if (!isPlatformAdmin) {
+        try {
+          profileClient = createAdminSupabase();
+        } catch {
+          profileClient = dataClient;
+        }
+      }
+      const { data: profileRows } = await profileClient
+        .from("profiles")
+        .select("user_id, display_name, job_title_id")
+        .in("user_id", userIds);
+      profileById = Object.fromEntries(
+        (profileRows ?? []).map((row) => [row.user_id, { display_name: row.display_name ?? null, job_title_id: row.job_title_id ?? null }])
+      );
+    }
     members = memberSource.map((row) => {
-      const profile = Array.isArray(row.profiles) ? row.profiles[0] : row.profiles;
+      const profile = profileById[row.user_id];
       const jobTitleId = profile?.job_title_id ?? null;
       const jobTitleName = jobTitleId ? jobTitleById[jobTitleId] ?? null : null;
       return {
@@ -231,6 +254,7 @@ export default async function ProjectDetailPage({
           project={project}
           tasks={tasks ?? []}
           role={role}
+          currentUserId={user?.id ?? null}
           driveItems={driveItems ?? []}
           units={units}
           members={members}

@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import PerfMeasureGuard from "@/components/perf-measure-guard";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { createServerSupabase } from "@/lib/supabase/server";
@@ -78,16 +79,19 @@ export default async function RootLayout({
   return (
     <html lang="zh-Hant" data-theme="ocean">
       <body className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
-        <AppShellWithActiveOrg
-          userEmail={userEmail}
-          userInitial={userInitial}
-          isPlatformAdmin={isPlatformAdmin}
-          navPermissions={navPermissions}
-          activeOrgId={activeOrgId}
-          activeOrgName={activeOrgName}
-        >
-          {children}
-        </AppShellWithActiveOrg>
+        <div data-which-layout="root">
+          <PerfMeasureGuard />
+          <AppShellWithActiveOrg
+            userEmail={userEmail}
+            userInitial={userInitial}
+            isPlatformAdmin={isPlatformAdmin}
+            navPermissions={navPermissions}
+            activeOrgId={activeOrgId}
+            activeOrgName={activeOrgName}
+          >
+            {children}
+          </AppShellWithActiveOrg>
+        </div>
       </body>
     </html>
   );

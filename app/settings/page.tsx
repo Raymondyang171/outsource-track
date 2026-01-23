@@ -188,21 +188,32 @@ export default async function SettingsPage({
     })
   );
 
+  // Manual tests:
+  // 1) A 非 owner/assignee：/settings 不應看到該 task。
+  // 2) A 成為 assignee：/settings 應看到。
+  // 3) A 僅有 project.view 但非 assignee：仍不應看到。
+  const { data: assigneeRows } = await supabase
+    .from("project_task_assignees")
+    .select("task_id")
+    .eq("user_id", user.id);
+  const assigneeTaskIds = Array.from(
+    new Set((assigneeRows ?? []).map((row) => row.task_id).filter(Boolean))
+  );
+
   let taskQuery = supabase
     .from("project_tasks")
     .select(
       "id, project_id, phase_name, code, name, progress, duration_days, start_offset_days, owner_unit_id, owner_user_id, updated_at"
     )
     .order("updated_at", { ascending: false });
-  if (unitIds.length && user.id) {
-    const inUnits = unitIds.map((id) => `"${id}"`).join(",");
-    taskQuery = taskQuery.or(`owner_unit_id.in.(${inUnits}),owner_user_id.eq.${user.id}`);
-  } else if (unitIds.length) {
-    taskQuery = taskQuery.in("owner_unit_id", unitIds);
+  if (assigneeTaskIds.length > 0) {
+    taskQuery = taskQuery.or(
+      `owner_user_id.eq.${user.id},id.in.(${assigneeTaskIds.map((id) => `"${id}"`).join(",")})`
+    );
   } else {
     taskQuery = taskQuery.eq("owner_user_id", user.id);
   }
-  const { data: tasks } = unitIds.length || user.id ? await taskQuery : { data: [] };
+  const { data: tasks } = await taskQuery;
 
   let assistRows: AssistRow[] = [];
   if (unitIds.length) {
@@ -372,11 +383,11 @@ export default async function SettingsPage({
           </div>
         </div>
 
-        {!unitIds.length && (
-          <div className="page-subtitle">尚未加入任何部門，暫無待辦項目。</div>
+        {taskItems.length === 0 && assistItems.length === 0 && (
+          <div className="page-subtitle">目前沒有待辦項目。</div>
         )}
 
-        {unitIds.length > 0 && (
+        {(taskItems.length > 0 || assistItems.length > 0) && (
           <div className="card-grid">
             <div className="card space-y-3">
               <div className="card-title">過期</div>

@@ -9,6 +9,8 @@ import ProjectForm from "@/components/admin/project-form";
 
 export const dynamic = "force-dynamic";
 
+// 此路由已停用 - 功能重複且有權限問題
+
 async function deleteProjectAction(formData: FormData) {
   "use server";
 
@@ -88,6 +90,9 @@ function formatDateSlash(value: string | null | undefined) {
 }
 
 export default async function AdminProjectsPage({ searchParams }: PageProps) {
+  // 此路由已停用 - 功能重複且有權限問題
+  redirect("/admin");
+
   const sp = await searchParams;
   const ok = getParam(sp?.ok);
   const errorMsg = getParam(sp?.error);
@@ -311,4 +316,3 @@ export default async function AdminProjectsPage({ searchParams }: PageProps) {
     </div>
   );
 }
-

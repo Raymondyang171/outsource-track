@@ -61,11 +61,49 @@ export async function POST(request: Request) {
   const { data: upserted, error: upsertErr } = await admin
     .from("devices")
     .upsert(upsertPayload, { onConflict: "user_id,device_id" })
-    .select("approved")
+    .select("id,approved")
     .maybeSingle();
 
   if (upsertErr) {
     return NextResponse.json({ ok: false, error: upsertErr.message }, { status: 500 });
+  }
+
+  // Org-level approved inheritance
+  if (upserted && upserted.approved === false) {
+    const { data: orgApprovedDevice, error: orgApprovedErr } = await admin
+      .from("devices")
+      .select("id")
+      .eq("org_id", memRow.org_id)
+      .eq("device_id", deviceId)
+      .eq("approved", true)
+      .limit(1)
+      .maybeSingle();
+
+    if (orgApprovedErr) {
+      console.error("Failed to query org-approved device during registration", {
+        error: orgApprovedErr.message,
+      });
+    } else if (orgApprovedDevice) {
+      // Auto-approve if another device in the same org was approved.
+      const now = new Date().toISOString();
+      const { error: updateErr } = await admin
+        .from("devices")
+        .update({ approved: true, approved_at: now })
+        .eq("id", upserted.id);
+
+      if (updateErr) {
+        console.error("Failed to auto-approve device via inheritance", {
+          error: updateErr.message,
+        });
+      } else {
+        console.log("Device auto-approved via org inheritance", {
+          deviceId,
+          userId: user.id,
+          orgId: memRow.org_id,
+        });
+        upserted.approved = true; // Mutate for the final response
+      }
+    }
   }
 
   const approved = upserted?.approved ?? false;

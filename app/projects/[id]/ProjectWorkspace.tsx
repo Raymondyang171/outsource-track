@@ -73,6 +73,7 @@ type Props = {
   project: Project;
   tasks: Task[];
   role: string | null;
+  currentUserId: string | null;
   driveItems: DriveItem[];
   units: Array<{ id: string; name: string }>;
   members: Array<{
@@ -115,6 +116,7 @@ export default function ProjectWorkspace({
   project,
   tasks,
   role,
+  currentUserId,
   driveItems,
   units,
   members,
@@ -122,6 +124,8 @@ export default function ProjectWorkspace({
   initialTab,
 }: Props) {
   const isViewer = role === "viewer";
+  const isManagerOrAdmin = role === "manager" || role === "admin" || role === "platform_admin";
+  const canEditByRole = !isViewer && isManagerOrAdmin;
   const tabs = [
     { id: "dashboard", label: "儀表板" },
     { id: "board", label: "看板" },
@@ -178,6 +182,17 @@ export default function ProjectWorkspace({
   useEffect(() => {
     setAssigneesByTaskIdState(assigneesByTaskId);
   }, [assigneesByTaskId]);
+
+  function canEditTask(task: Task | null | undefined) {
+    if (!task) return false;
+    if (isViewer) return false;
+    if (canEditByRole) return true;
+    const me = currentUserId;
+    if (!me) return false;
+    if (task.owner_user_id && task.owner_user_id === me) return true;
+    const assignees = assigneesByTaskIdState?.[task.id] || [];
+    return assignees.includes(me);
+  }
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -327,6 +342,7 @@ export default function ProjectWorkspace({
   }, [initialTab]);
 
   const selectedTask = localTasks.find((task) => task.id === selectedId) ?? null;
+  const canEditSelectedTask = canEditTask(selectedTask);
 
   function getTaskStatus(task: Task | null): TaskStatus {
     if (!task) return "ready";
@@ -538,7 +554,7 @@ export default function ProjectWorkspace({
     type: "move" | "resize-left" | "resize-right",
     event: ReactPointerEvent<HTMLElement>
   ) {
-    if (isViewer) return;
+    if (!canEditTask(task)) return;
     if (event.button !== 0) return;
     event.preventDefault();
     event.stopPropagation();
@@ -623,6 +639,7 @@ export default function ProjectWorkspace({
   }, [dragState, dayWidth]);
 
   function openTask(task: Task) {
+    if (!canEditTask(task)) return;
     setSelectedId(task.id);
     setPanelOpen(true);
     setAssigneeUnitId(task.owner_unit_id ?? "");
@@ -687,7 +704,8 @@ export default function ProjectWorkspace({
     fileId: string,
     options?: { skipConfirm?: boolean; autoRetry?: boolean }
   ) {
-    if (isViewer) return;
+    const task = tasksRef.current.find((t) => t.id === taskId);
+    if (!canEditTask(task)) return;
     if (!options?.skipConfirm) {
       const confirmed = window.confirm("確定要刪除此檔案嗎？");
       if (!confirmed) return;
@@ -882,10 +900,12 @@ export default function ProjectWorkspace({
         progress: value,
         note,
       });
+      console.log("[updateTaskProgress res]", res);
 
       if (!res?.ok) {
         const msg = `保存失敗：${res?.error ?? "unknown"}`;
         setMessage(msg);
+        alert(`保存失敗：${res?.error} | ${res?.code ?? ""} | ${res?.message ?? ""}`);
         return;
       }
 
@@ -1417,7 +1437,7 @@ export default function ProjectWorkspace({
                               開啟檔案
                             </a>
                           </Button>
-                          {!isViewer && (
+                          {canEditTask(task) && (
                             <Button
                               variant="link"
                               size="sm"
@@ -1483,7 +1503,7 @@ export default function ProjectWorkspace({
                     <Select
                       value={assigneeUnitId || "all"}
                       onValueChange={(value) => setAssigneeUnitId(value === "all" ? "" : value)}
-                      disabled={isViewer}
+                      disabled={!canEditSelectedTask}
                     >
                       <SelectTrigger id="task-owner-unit">
                         <SelectValue placeholder="未指定" />
@@ -1507,7 +1527,7 @@ export default function ProjectWorkspace({
                       placeholder="搜尋部門 / 名字 / 職稱 / 權限"
                       value={assigneeSearch}
                       onChange={(e) => setAssigneeSearch(e.target.value)}
-                      disabled={isViewer}
+                      disabled={!canEditSelectedTask}
                     />
                 </div>
                 <p className="text-sm text-muted-foreground">已選擇 {assigneeUserIds.length} 位</p>
@@ -1536,7 +1556,7 @@ export default function ProjectWorkspace({
                               return [...prev, member.user_id];
                             });
                           }}
-                          disabled={isViewer}
+                          disabled={!canEditSelectedTask}
                           className="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
                         />
                         <span className="text-sm">{member.label}</span>
@@ -1548,7 +1568,7 @@ export default function ProjectWorkspace({
                   <Button
                     type="button"
                     onClick={saveAssignees}
-                    disabled={isViewer}
+                    disabled={!canEditSelectedTask}
                   >
                     儲存指派
                   </Button>
@@ -1568,7 +1588,7 @@ export default function ProjectWorkspace({
                     <Select
                       value={getTaskStatus(selectedTask)}
                       onValueChange={(val) => onStatusChange(val as TaskStatus)}
-                      disabled={isViewer}
+                      disabled={!canEditSelectedTask}
                     >
                       <SelectTrigger id="task-status">
                         <SelectValue />
@@ -1591,7 +1611,7 @@ export default function ProjectWorkspace({
                       max={100}
                       value={[progress]}
                       onValueChange={(value) => setProgress(value[0])}
-                      disabled={isViewer}
+                      disabled={!canEditSelectedTask}
                     />
                 </div>
                 <div className="space-y-2">
@@ -1604,14 +1624,14 @@ export default function ProjectWorkspace({
                       value={note}
                       onChange={(e) => setNote(e.target.value)}
                       rows={3}
-                      disabled={isViewer}
+                      disabled={!canEditSelectedTask}
                     />
                 </div>
                 <div className="flex justify-end gap-2">
                   <Button type="button" variant="ghost" onClick={() => setPanelOpen(false)}>
                     關閉
                   </Button>
-                  <Button type="button" onClick={saveProgress} disabled={isPending || isViewer}>
+                  <Button type="button" onClick={saveProgress} disabled={isPending || !canEditSelectedTask}>
                     {isPending ? "儲存中..." : "儲存"}
                   </Button>
                 </div>
@@ -1645,7 +1665,7 @@ export default function ProjectWorkspace({
                       placeholder="子任務名稱"
                       value={subtaskName}
                       onChange={(e) => setSubtaskName(e.target.value)}
-                      disabled={isViewer}
+                      disabled={!canEditSelectedTask}
                     />
                   </div>
                   <div className="space-y-2">
@@ -1658,7 +1678,7 @@ export default function ProjectWorkspace({
                       placeholder="工期 (天)"
                       value={subtaskDuration}
                       onChange={(e) => setSubtaskDuration(Number(e.target.value))}
-                      disabled={isViewer}
+                      disabled={!canEditSelectedTask}
                     />
                   </div>
                   <div className="space-y-2 md:col-span-2">
@@ -1668,7 +1688,7 @@ export default function ProjectWorkspace({
                     <Select
                       value={String(subtaskStartIndex)}
                       onValueChange={(val) => setSubtaskStartIndex(Number(val))}
-                      disabled={isViewer}
+                      disabled={!canEditSelectedTask}
                     >
                       <SelectTrigger id="subtask-start-date">
                         <SelectValue placeholder="開始日期" />
@@ -1683,7 +1703,7 @@ export default function ProjectWorkspace({
                     </Select>
                   </div>
                   <div className="md:col-span-2">
-                    <Button type="button" onClick={onCreateSubtask} disabled={isViewer} className="w-full">
+                    <Button type="button" onClick={onCreateSubtask} disabled={!canEditSelectedTask} className="w-full">
                       新增子任務
                     </Button>
                   </div>
@@ -1696,7 +1716,7 @@ export default function ProjectWorkspace({
                 <FileUploadForm
                   taskId={selectedTask.id}
                   onUploaded={(item) => addUploadedFile(selectedTask.id, item)}
-                  disabled={isViewer}
+                  disabled={!canEditSelectedTask}
                 />
                 <p className="text-sm text-muted-foreground">目前連結數量 {filesByTask[selectedTask.id]?.length ?? 0}</p>
                 <div className="space-y-2">
@@ -1730,7 +1750,7 @@ export default function ProjectWorkspace({
                                 開啟檔案
                               </a>
                             </Button>
-                            {!isViewer && (
+                            {canEditSelectedTask && (
                               <Button
                                 variant="link"
                                 size="sm"

@@ -7,6 +7,9 @@ import { getLatestUserOrgId } from "@/lib/org";
 import { NextRequest, NextResponse } from "next/server";
 
 export async function POST(req: NextRequest) {
+  // 此路由已停用 - 功能重複且有權限問題
+  return NextResponse.json({ error: "Route disabled" }, { status: 410 });
+
   const supabase = await createServerSupabase();
   const { data } = await supabase.auth.getUser();
   const { data: sessionData } = await supabase.auth.getSession();
